@@ -1,0 +1,12 @@
+services:
+  jupyter:
+    container_name: jupyter
+    hostname: jupyter
+    image: jupyter/base-notebook
+    network_mode: host
+    environment:
+      - http_proxy=$http_proxy
+      - https_proxy=$https_proxy
+      - no_proxy=$no_proxy
+    volumes:
+      - /mnt/c/Users/u088276/source/repos/jet_engine_rul:/home/jovyan/work/jet_engine_rul
