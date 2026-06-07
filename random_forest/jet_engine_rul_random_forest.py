@@ -8,12 +8,18 @@ import random
 
 from enum import Enum
 from mpl_toolkits.mplot3d import Axes3D
+from pathlib import Path
 from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score, silhouette_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
+
+OUTPUT_DIR = Path("output")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Enum with column indexes
 class Column(Enum):
     UnitNumber = 0
     TimeCycles = 1
@@ -77,154 +83,190 @@ RUL_COLUMN = "RUL"
 RUL_CLIPPED_COLUMN = "RUL_CLIPPED"
 CONDITIONS_COLUMN = "Operational Condition"
 
+# Constants from given data
 NUM_OPERATIONAL_CONDITIONS = 6
+OPERATIONAL_PARAMS = [COLUMN_NAMES[Column.Altitude], COLUMN_NAMES[Column.MachNumber], COLUMN_NAMES[Column.TRA]]
 
 # Parameter Tuning:
 WINDOW_SIZE = 10
 MIN_SAMPLES_LEAF = 4
+TRAINING_FILE_COUNT = 4
+RANDOM_STATE=42
 
-def LoadData(training_file_count, debug=False):
-    # Data Gathering
+def printHeading(heading):
+    c = "#"
+    length = len(heading)
+    print(f"\n{c * (length + 4)}")
+    print(f"{c} {heading} {c}")
+    print(f"{c * (length + 4)}")
+
+def LoadData(debug=False):
+    printHeading("Data Gathering")
     df_train_files = []
-    ## Data Loading
-    ###     Start by loading the training data.
-    for i in range(training_file_count):
+    head_count = 5
+    for i in range(TRAINING_FILE_COUNT):
+        print(f"Loading training file {i+1}...")
         df_train_files.append(pd.read_csv(f"../Data/train_FD00{i+1}.txt", sep=' ', header=None))
         if debug: 
-            print(f"\nTraining File {i+1}")
+            print(df_train_files[i].head(head_count))
             print(df_train_files[i].describe())
 
-    ## Uniquifying Unit Numbers
-    ###     Unit numbers are duplicated between the training files. 
-    ###     If we can uniquify them, we can merge the data sets into one.
-    for i in range(training_file_count):
+    print("Uniquifying unit numbers...")
+    # Unit numbers are duplicated between the training files. 
+    # If we can uniquify them, we can merge the data sets into one.
+    for i in range(TRAINING_FILE_COUNT):
         if (i > 0):
             df_train_files[i][Column.UnitNumber.value] += \
                 df_train_files[i-1][Column.UnitNumber.value].max()
 
-    ## Merging Data Sets
-    ###     The data can now be merged into a single data set as we have unique 
-    ###     Unit Numbers.
-    return pd.concat(df_train_files)
+    print("Merging data sets...")
+    # The data can now be merged into a single data set as we have unique 
+    # Unit Numbers.
+    df_train = pd.concat(df_train_files)
+    if debug:
+        print(df_train)
+        print(df_train.describe())
+    return df_train
 
 def PrepareData(df_train, debug=False):
-    # Data Preparation
+    printHeading("Data Preparation")
+    print("Removing null data...")
+    # The data has columns 26 and 27 which should not be present. 
+    # Inspecting these columns, it looks like they are the result of trailing spaces in the data.
+    # We can drop columns 26 and 27 from the data sets.
     df_train = df_train.iloc[:, :26]
-    ## Removing null data
-    ###     The data has columns 26 and 27 which should not be present. 
-    ###     Inspecting these columns, it looks like they are the result of trailing 
-    ###     spaces in the data.
-    ###     We can drop columns 26 and 27 from the data sets.
 
-    ## Defining Columns
-    ###     The first two column names are specified in the readme.txt file attached
-    ###     to the CMAPSS data: Unit Number and Time in Cycles.
-    ###     
-    ###     The paper titled "Damage Propagation Modelling" attached to the CMAPSS data 
-    ###     specifies the operational parameters as:
-    ###         1. Altitude (0-42K ft.)
-    ###         2. Mach number (0-0.84)
-    ###         3. Throttle resolver angle (TRA) (20-100)
-    ###  
-    ###     Looking at the min and max values in the dataframe description above, we see 
-    ###     that these parameters map roughly to columns 2, 3 and 4, and in the same 
-    ###     order.
-    ###
-    ###     For now we will assume that the sensor data is given in the same order as the 
-    ###     specified in "Damage Propagation Modelling".
+    print("Adding column names to dataset...")
+    # The first two column names are specified in the readme.txt file attached
+    # to the CMAPSS data: Unit Number and Time in Cycles.
+
+    # The paper titled "Damage Propagation Modelling" attached to the CMAPSS data specifies the operational parameters as:
+    # 1. Altitude (0-42K ft.)
+    # 2. Mach number (0-0.84)
+    # 3. Throttle resolver angle (TRA) (20-100)
+
+    # Looking at the min and max values in the dataframe description above, we see 
+    # that these parameters map roughly to columns 2, 3 and 4, and in the same 
+    # order.
+
+    # For now we will assume that the sensor data is given in the same order as the 
+    # specified in "Damage Propagation Modelling".
     df_train.columns = list(COLUMN_NAMES.values())
+    print(list(df_train.columns))
 
-    ###     Have a look at the description of the complete training set:
     if debug:
-        print("\nComplete training set description:")
         print(df_train.describe())
     return df_train
 
 def FeatureEngineering(df_train, debug=False):
-    # Feature Engineering
+    printHeading("Feature Engineering")
     def CalculateRUL(df_train, debug=False):
-        ## Compute the RUL for each Unit
+        print("Calculating the RUL for each Unit...")
         fail_times = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[COLUMN_NAMES[Column.TimeCycles]].transform('max')
         df_train[RUL_COLUMN] = fail_times - df_train[COLUMN_NAMES[Column.TimeCycles]]
+
+        print("Plotting the RUL distribution for each Unit...")
+        max_cycles_per_unit = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[RUL_COLUMN].max()
+        plt.hist(max_cycles_per_unit, bins=30)
+        plt.title('Distribution of Engine Lifespans')
+        plt.xlabel("Engine Lifespan")
+        plt.ylabel("Engine Count")
+        plt.savefig(f"{OUTPUT_DIR}/Engine_Lifespan_Distribution.png", bbox_inches='tight', dpi=300)
+        plt.close()
+
+        if debug:
+            print(max_cycles_per_unit.describe())
+
+        # We see from the plot above that most engines fail between ~150 and 280 cycles. The most common lifespan is around 200 cycles. 
+        # Very few engines last 400-550 cycles.
+        # Engines start failing at about 128 cycles, so we should be able to clip RUL <= 130 cycles.
         return df_train
 
     def ClusterOperationalConditions(df_train, debug=False):
-        ## Clustering the operational conditions
-        operational_params = [
-                COLUMN_NAMES[Column.Altitude],
-                COLUMN_NAMES[Column.MachNumber],
-                COLUMN_NAMES[Column.TRA]
-                ]
-        ###     Data is given for six operational conditions determined by the Altitude, 
-        ###     Mach Number and TRA columns.
-        df_operational_params = df_train[operational_params]
+        print("\nClustering the operational conditions...")
+        df_operational_params = df_train[OPERATIONAL_PARAMS]
 
-        ### Scale the condition data before KMeans fit
+        print("\tScaling condition data before KMeans fit")
         operational_params_scaler = StandardScaler()
         df_operational_params_scaled = operational_params_scaler.fit_transform(df_operational_params)
 
-        ### Perform KMeans fit
+        print("\tPerforming KMeans fit")
         km = KMeans(n_clusters=NUM_OPERATIONAL_CONDITIONS)
         df_train[CONDITIONS_COLUMN] = km.fit_predict(df_operational_params_scaled)
+        print("\t\tCluster centers :")
+        operational_condition_centers = operational_params_scaler.inverse_transform(km.cluster_centers_)
+        for i in range(NUM_OPERATIONAL_CONDITIONS):
+            print(f"\t\tCondition {i+1}: {OPERATIONAL_PARAMS[0]} = {int(operational_condition_centers[i][0] * 1000)}Ft, \
+                    {OPERATIONAL_PARAMS[1]} = {round(operational_condition_centers[i][1], 2)}, {OPERATIONAL_PARAMS[2]} = {round(operational_condition_centers[i][2], 2)}")
 
-        if debug:
-            print(df_train)
+        print("\tCalculating operating condition clusters silhouette score...")
+        print(f"\t\tResult: {silhouette_score(df_operational_params_scaled, df_train[CONDITIONS_COLUMN], metric="euclidean", sample_size=5000, random_state=RANDOM_STATE)}")
 
-            operational_conditions_fig = plt.figure(figsize=(10,8))
-            ax = operational_conditions_fig.add_subplot(111, projection='3d')
-            operational_conditions_colors = ['#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00', '#ffff33']
-            for cluster in range(NUM_OPERATIONAL_CONDITIONS):
-                cluster_data = df_train[df_train[CONDITIONS_COLUMN] == cluster]
+        print("\tPlotting clusters...")
+        operational_conditions_fig = plt.figure(figsize=(10,8))
+        ax = operational_conditions_fig.add_subplot(111, projection='3d')
+        operational_conditions_colors = ['#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00', '#ffff33']
+        for cluster in range(NUM_OPERATIONAL_CONDITIONS):
+            cluster_data = df_train[df_train[CONDITIONS_COLUMN] == cluster]
 
-                ax.scatter(
-                    cluster_data[COLUMN_NAMES[Column.Altitude]],
-                    cluster_data[COLUMN_NAMES[Column.MachNumber]],
-                    cluster_data[COLUMN_NAMES[Column.TRA]],
-                    c=operational_conditions_colors[cluster],
-                    label=f'Condition {cluster}',
-                    s=50,
-                    alpha=0.8
-                )
-            ax.set_xlabel(f"{COLUMN_NAMES[Column.Altitude]} (x1000 ft)")
-            ax.set_ylabel(COLUMN_NAMES[Column.MachNumber])
-            ax.set_zlabel(COLUMN_NAMES[Column.TRA])
-            ax.set_title("Operational Condition Clusters")
-            ax.legend()
-            plt.show()
+            ax.scatter(
+                cluster_data[COLUMN_NAMES[Column.Altitude]],
+                cluster_data[COLUMN_NAMES[Column.MachNumber]],
+                cluster_data[COLUMN_NAMES[Column.TRA]],
+                c=operational_conditions_colors[cluster],
+                label=f'Condition {cluster}',
+                s=50,
+                alpha=0.8
+            )
+        ax.set_xlabel(f"{COLUMN_NAMES[Column.Altitude]} (x1000 ft)")
+        ax.set_ylabel(COLUMN_NAMES[Column.MachNumber])
+        ax.set_zlabel(COLUMN_NAMES[Column.TRA])
+        ax.set_title("Operational Condition Clusters")
+        ax.legend()
+        plt.savefig(f"{OUTPUT_DIR}/Operational_Condition_Clusters.png", bbox_inches='tight', dpi=300)
+        plt.close()
 
-            print("\nOperation Condition Clusters Silhouette Score:")
-            print(silhouette_score(df_operational_params_scaled, df_train[CONDITIONS_COLUMN], metric="euclidean", sample_size=25000))
+        print("Dropping operational parameter columns, we are satisfied with the clustering...")
+        df_train = df_train.drop(columns=OPERATIONAL_PARAMS)
 
-            print("Cluster centers :")
-            operational_condition_centers = operational_params_scaler.inverse_transform(km.cluster_centers_)
-            for i in range(NUM_OPERATIONAL_CONDITIONS):
-                print(f"Condition {i+1}: {operational_params[0]} = {int(operational_condition_centers[i][0] * 1000)}Ft, \
-                        {operational_params[1]} = {round(operational_condition_centers[i][1], 2)}, {operational_params[2]} = {round(operational_condition_centers[i][2], 2)}")
+        print("Plotting operational condition over cycles for a few sample engines...")
+        sample_units = random.sample(list(df_train[COLUMN_NAMES[Column.UnitNumber]].unique()), 10)
+        plt.figure(figsize=(12, 8))
+        for unit in sample_units:
+            unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
+            unit_data = unit_data.sort_values(COLUMN_NAMES[Column.TimeCycles])
+            plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], 
+                    unit_data[CONDITIONS_COLUMN], 
+                    label=f'Unit {unit}')
+        
+        plt.xlabel('Cycle')
+        plt.ylabel('Operational Condition')
+        plt.title('Operational Condition over Time for Sample Engines')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.savefig(f"{OUTPUT_DIR}/Operational_Condition_Per_Engine_Sample.png", bbox_inches='tight', dpi=300)
+        plt.close()
+        # From the graph above it is clear that each engine operates at many different operating conditions, not just one.
+        # We should try to calculate an average of all previous conditions at each time step for the final result.
 
-        ### Drop operational parameter columns, we are satisfied with the clustering:
-        df_train = df_train.drop(columns=operational_params)
         if debug:
             print(df_train)
 
         return df_train
 
     def ClipRUL(df_train, debug=False):
-        ## Limiting the dataset to a lower RUL.
-        max_cycles_per_unit = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[COLUMN_NAMES[Column.TimeCycles]].max()
-        if debug:
-            print(f"\nMax cycles per unit: \n{max_cycles_per_unit}")
-            plt.hist(max_cycles_per_unit, bins=30)
-            plt.title('Distribution of Engine Lifespans')
-            plt.xlabel("Engine Lifespan")
-            plt.ylabel("Engine Count")
-            plt.show()
-            print(max_cycles_per_unit.describe())
-
-        ###         We see from the plot below that most engines fail between ~150 and 280 cycles. The most common lifespan is around 200 cycles. 
-        ###         Very few engines last 400-550 cycles.
-        ###         Engines start failing at about 128 cycles, so we should be able to clip RUL <= 130 cycles.
         rul_limit = 130
+        print(f"\nClipping RUL at a maximum of {rul_limit} cycles...")
         df_train[RUL_CLIPPED_COLUMN] = df_train[RUL_COLUMN].clip(upper=rul_limit)
+
+        print("Plotting the clipped RUL distribution for each Unit...")
+        max_cycles_per_unit = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[RUL_CLIPPED_COLUMN].max()
+        plt.hist(max_cycles_per_unit, bins=5)
+        plt.title('Distribution of Clipped Engine Lifespans')
+        plt.xlabel("Engine Lifespan")
+        plt.ylabel("Engine Count")
+        plt.savefig(f"{OUTPUT_DIR}/Engine_Lifespan_Clipped_Distribution.png", bbox_inches='tight', dpi=300)
+        plt.close()
 
         if debug:
             print(df_train.describe())
@@ -298,16 +340,17 @@ def FeatureEngineering(df_train, debug=False):
         return df_train
 
     df_train = CalculateRUL(df_train)
-    df_train = ClusterOperationalConditions(df_train)
     df_train = ClipRUL(df_train)
-    df_train, sensor_columns = FeatureSelection(df_train)
-    df_train = CreateRollingFeatures(df_train, sensor_columns)
+    df_train = ClusterOperationalConditions(df_train)
+    #df_train, sensor_columns = FeatureSelection(df_train)
+    #df_train = CreateRollingFeatures(df_train, sensor_columns)
+    sensor_columns = []
     return df_train, sensor_columns
 
 def TrainTestSplit(df_train, debug=False):
     ## Train/Test Split
     unique_units = df_train[COLUMN_NAMES[Column.UnitNumber]].unique()
-    train_units, test_units = train_test_split(unique_units, test_size=0.20, random_state=42)
+    train_units, test_units = train_test_split(unique_units, test_size=0.20, random_state=RANDOM_STATE)
     df_train_split = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]].isin(train_units)].copy()
     df_test_split = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]].isin(test_units)].copy()
     if debug:
@@ -411,13 +454,13 @@ def EvaluateModel(df_test_split, model, feature_cols, X_test, y_test, debug=True
 
 
 
-df_train = LoadData(training_file_count=4)
+df_train = LoadData()
 df_train = PrepareData(df_train)
 df_train, sensor_columns = FeatureEngineering(df_train)
 
-df_train = df_train[df_train[CONDITIONS_COLUMN] == 0]
-df_train_split, df_test_split = TrainTestSplit(df_train)
-model, feature_cols, X_test, y_test, X_train, y_train = RandomForestModel(df_train_split, df_test_split)
+#df_train = df_train[df_train[CONDITIONS_COLUMN] == 0]
+#df_train_split, df_test_split = TrainTestSplit(df_train)
+#model, feature_cols, X_test, y_test, X_train, y_train = RandomForestModel(df_train_split, df_test_split)
 
-EvaluateModel(df_train_split, model, feature_cols, X_train, y_train)
-EvaluateModel(df_test_split, model, feature_cols, X_test, y_test)
+#EvaluateModel(df_train_split, model, feature_cols, X_train, y_train)
+#EvaluateModel(df_test_split, model, feature_cols, X_test, y_test)
