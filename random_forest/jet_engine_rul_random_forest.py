@@ -105,7 +105,9 @@ OPERATIONAL_PARAMS = [COLUMN_NAMES[Column.Altitude], COLUMN_NAMES[Column.MachNum
 WINDOW_SIZE = 10
 MIN_SAMPLES_LEAF = 4
 TRAINING_FILE_COUNT = 4
-RANDOM_STATE=42
+RANDOM_STATE = 42
+SILHOUETTE_SCORE_SAMPLE_SIZE = 5000
+SENSOR_VARIANCE_LIMIT = 100
 
 def printHeading(heading):
     c = "#"
@@ -219,7 +221,7 @@ def FeatureEngineering(df_train, debug=False):
                     {OPERATIONAL_PARAMS[1]} = {round(operational_condition_centers[i][1], 2)}, {OPERATIONAL_PARAMS[2]} = {round(operational_condition_centers[i][2], 2)}")
 
         print("\tCalculating operating condition clusters silhouette score...")
-        print(f"\t\tResult: {silhouette_score(df_operational_params_scaled, df_train[CONDITIONS_COLUMN], metric="euclidean", sample_size=5000, random_state=RANDOM_STATE)}")
+        print(f"\t\tResult: {silhouette_score(df_operational_params_scaled, df_train[CONDITIONS_COLUMN], metric="euclidean", sample_size=SILHOUETTE_SCORE_SAMPLE_SIZE, random_state=RANDOM_STATE)}")
 
         print("\tPlotting clusters...")
         operational_conditions_fig = plt.figure(figsize=(10,8))
@@ -339,24 +341,48 @@ def FeatureEngineering(df_train, debug=False):
 
         return df_train
 
-    def FeatureSelection(df_train, debug=False):
-        ## Feature Selection
-        ###         Find and drop sensors that have low variance for all operational conditions:
-        sensor_columns = [COLUMN_NAMES[col] for col in Column if Column.T2.value <= col.value <= Column.W32.value]
-        low_variance_sensors = []
-        sensor_variance_limit = 0.01
-        for i in range(NUM_OPERATIONAL_CONDITIONS):
-            sensor_variances = df_train[df_train[CONDITIONS_COLUMN] == i][sensor_columns].var()
-            low_variance_sensors.append(sensor_variances[sensor_variances < sensor_variance_limit].index.tolist())
-            if debug:
-                print(f"\nCondition {i} Sensor Variances:\n{sensor_variances}")
-                print(f"\nCondition {i} Low Variance Sensors:\n{low_variance_sensors[i]}")
+    def DropLowVarianceSensors(df_train, debug=False):
+        printHeading("Dropping Low Variance Sensors")
 
-        common_low_variance_sensors = set(low_variance_sensors[0]).intersection(*low_variance_sensors[1:])
-        df_train = df_train.drop(columns=list(common_low_variance_sensors))
-        sensor_columns = list(set(sensor_columns) - set(common_low_variance_sensors))
+        sensor_columns = [COLUMN_NAMES[col] for col in Column if Column.T2.value <= col.value <= Column.W32.value]
+
+        # Plot sensor data for a few units:
+        sample_units = random.sample(list(df_train[COLUMN_NAMES[Column.UnitNumber]].unique()), 10)
+        for s in sensor_columns:
+            plt.figure(figsize=(12, 6))
+            for unit in sample_units:
+                unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
+                plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], 
+                        unit_data[s].cummax(), 
+                        label=f"Unit {unit}")
+                
+            plt.xlabel('Cycle')
+            plt.ylabel(f'Sensor {s}')
+            plt.title(f'Sensor {s} vs. Time')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.savefig(f"{OUTPUT_DIR}/Sensor_{s}_vs_Time.png", 
+                       bbox_inches='tight', dpi=300)
+            plt.close()
+
+        # From the graphs above it looks like we can drop the following sensors as they remain relatively constant over time
+        low_var_sensors = [ 
+                           COLUMN_NAMES[Column.epr],
+                           COLUMN_NAMES[Column.farB],
+                           COLUMN_NAMES[Column.Nf_dmd],
+                           COLUMN_NAMES[Column.Nf],
+                           COLUMN_NAMES[Column.NRf],
+                           COLUMN_NAMES[Column.P2],
+                           COLUMN_NAMES[Column.P15],
+                           COLUMN_NAMES[Column.PCNfR_dmd],
+                           COLUMN_NAMES[Column.T2],
+                           ]
+
+        df_train = df_train.drop(columns=low_var_sensors)
+        sensor_columns = list(set(sensor_columns) - set(low_var_sensors))
+
         if debug:
-            print(common_low_variance_sensors)
+            print(df_train)
             print(df_train.describe())
 
         return df_train, sensor_columns
@@ -406,7 +432,7 @@ def FeatureEngineering(df_train, debug=False):
     df_train = ClipRUL(df_train)
     df_train = ClusterOperationalConditions(df_train)
     df_train = AddConditionCycleFeatures(df_train)
-    #df_train, sensor_columns = FeatureSelection(df_train)
+    df_train, sensor_columns = DropLowVarianceSensors(df_train)
     #df_train = CreateRollingFeatures(df_train, sensor_columns)
     sensor_columns = []
     return df_train, sensor_columns
