@@ -82,7 +82,20 @@ COLUMN_NAMES = {
 RUL_COLUMN = "RUL"
 RUL_CLIPPED_COLUMN = "RUL_CLIPPED"
 CONDITIONS_COLUMN = "Operational Condition"
-CYCLES_CURRENT_COND = "Cycles In Current Condition"
+TOTAL_COND_1 = "Total Cycles Condition 1"
+TOTAL_COND_2 = "Total Cycles Condition 2"
+TOTAL_COND_3 = "Total Cycles Condition 3"
+TOTAL_COND_4 = "Total Cycles Condition 4"
+TOTAL_COND_5 = "Total Cycles Condition 5"
+TOTAL_COND_6 = "Total Cycles Condition 6"
+TOTAL_COND_CYCLE_COLS = [
+        TOTAL_COND_1,
+        TOTAL_COND_2,
+        TOTAL_COND_3,
+        TOTAL_COND_4,
+        TOTAL_COND_5,
+        TOTAL_COND_6
+        ]
 
 # Constants from given data
 NUM_OPERATIONAL_CONDITIONS = 6
@@ -259,6 +272,60 @@ def FeatureEngineering(df_train, debug=False):
 
         return df_train
 
+    def AddConditionCycleFeatures(df_train, debug=False):
+        print("Adding cumulative cycles per operational condition...")
+        
+        # 2. Cumulative cycles for EACH of the 6 conditions
+        for cond in range(NUM_OPERATIONAL_CONDITIONS):
+            # Create indicator (1 if in this condition, 0 otherwise)
+            df_train[TOTAL_COND_CYCLE_COLS[cond]] = (df_train[CONDITIONS_COLUMN] == cond).astype(int)
+            # Cumulative sum per engine
+            df_train[TOTAL_COND_CYCLE_COLS[cond]] = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[TOTAL_COND_CYCLE_COLS[cond]].cumsum()
+        
+        print(f"✅ Added {NUM_OPERATIONAL_CONDITIONS} cumulative condition columns + Current Condition column")
+        
+        if debug:
+            cols_to_show = [COLUMN_NAMES[Column.UnitNumber], CONDITIONS_COLUMN, 
+                           'Cumul_Cycles_Current_Cond'] + \
+                          [f'Cumul_Cycles_Cond_{i}' for i in range(NUM_OPERATIONAL_CONDITIONS)]
+            print(df_train[cols_to_show].head(15))
+        
+        return df_train
+
+    def PlotCumulativeConditionCycles(df_train, debug=False):
+        print("Plotting cumulative cycles per condition for sample engines...")
+        
+        # Pick 4 random engines
+        sample_units = random.sample(list(df_train[COLUMN_NAMES[Column.UnitNumber]].unique()), 1)
+        
+        for unit in sample_units:
+            unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
+            
+            plt.figure(figsize=(12, 6))
+            
+            # Plot cumulative cycles for each condition
+            for col in TOTAL_COND_CYCLE_COLS:
+                plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], 
+                        unit_data[col], 
+                        label=col)
+            
+            # Also plot total cycles for reference
+            # plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], 
+            #         unit_data[COLUMN_NAMES[Column.TimeCycles]], 
+            #         label='Total Cycles', linestyle='--', color='black', alpha=0.7)
+            
+            plt.xlabel('Cycle')
+            plt.ylabel('Cumulative Cycles')
+            plt.title(f'Cumulative Cycles per Condition - Unit {unit}')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.savefig(f"{OUTPUT_DIR}/Cumulative_Condition_Cycles_Sample_Unit.png", 
+                       bbox_inches='tight', dpi=300)
+            plt.close()
+        
+        print(f"✅ Saved cumulative condition plots for {len(sample_units)} engines")
+        return df_train
+
     def ClipRUL(df_train, debug=False):
         rul_limit = 130
         print(f"\nClipping RUL at a maximum of {rul_limit} cycles...")
@@ -344,6 +411,8 @@ def FeatureEngineering(df_train, debug=False):
     df_train = CalculateRUL(df_train)
     df_train = ClipRUL(df_train)
     df_train = ClusterOperationalConditions(df_train)
+    df_train = AddConditionCycleFeatures(df_train)
+    df_train = PlotCumulativeConditionCycles(df_train)
     #df_train, sensor_columns = FeatureSelection(df_train)
     #df_train = CreateRollingFeatures(df_train, sensor_columns)
     sensor_columns = []
