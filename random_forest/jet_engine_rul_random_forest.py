@@ -50,38 +50,39 @@ class Column(Enum):
 
 # Dictionary mapping Column enum values to their string names
 COLUMN_NAMES = {
-    Column.UnitNumber: 'Unit Number',
-    Column.TimeCycles: 'Time (Cycles)',
-    Column.Altitude: 'Altitude',
-    Column.MachNumber: 'Mach Number',
-    Column.TRA: 'TRA',
-    Column.T2: 'T2',  # Total temperature at fan inlet (°R)
-    Column.T24: 'T24',  # Total temperature at LPC outlet (°R)
-    Column.T30: 'T30',  # Total temperature at HPC outlet (°R)
-    Column.T50: 'T50',  # Total temperature at LPT outlet (°R)
-    Column.P2: 'P2',  # Pressure at fan inlet (psia)
-    Column.P15: 'P15',  # Total pressure in bypass-duct (psia)
-    Column.P30: 'P30',  # Total pressure at HPC outlet (psia)
-    Column.Nf: 'Nf',  # Physical fan speed (rpm)
-    Column.Nc: 'Nc',  # Physical core speed (rpm)
-    Column.epr: 'epr',  # Engine pressure ratio (P50/P2) (--)
-    Column.Ps30: 'Ps30',  # Static pressure at HPC outlet (psia)
-    Column.phi: 'phi',  # Ratio of fuel flow to Ps30 (pps/psi)
-    Column.NRf: 'NRf',  # Corrected fan speed (rpm)
-    Column.NRc: 'NRc',  # Corrected core speed (rpm)
-    Column.BPR: 'BPR',  # Bypass Ratio (--)
-    Column.farB: 'farB',  # Burner fuel-air ratio (--)
-    Column.htBleed: 'htBleed',  # Bleed Enthalpy (--)
-    Column.Nf_dmd: 'Nf_dmd',  # Demanded fan speed (rpm)
-    Column.PCNfR_dmd: 'PCNfR_dmd',  # Demanded corrected fan speed (rpm)
-    Column.W31: 'W31',  # HPT coolant bleed (lbm/s)
-    Column.W32: 'W32',  # LPT coolant bleed (lbm/s)
-}
+        Column.UnitNumber: 'Unit Number',
+        Column.TimeCycles: 'Time (Cycles)',
+        Column.Altitude: 'Altitude',
+        Column.MachNumber: 'Mach Number',
+        Column.TRA: 'TRA',
+        Column.T2: 'T2',  # Total temperature at fan inlet (°R)
+        Column.T24: 'T24',  # Total temperature at LPC outlet (°R)
+        Column.T30: 'T30',  # Total temperature at HPC outlet (°R)
+        Column.T50: 'T50',  # Total temperature at LPT outlet (°R)
+        Column.P2: 'P2',  # Pressure at fan inlet (psia)
+        Column.P15: 'P15',  # Total pressure in bypass-duct (psia)
+        Column.P30: 'P30',  # Total pressure at HPC outlet (psia)
+        Column.Nf: 'Nf',  # Physical fan speed (rpm)
+        Column.Nc: 'Nc',  # Physical core speed (rpm)
+        Column.epr: 'epr',  # Engine pressure ratio (P50/P2) (--)
+        Column.Ps30: 'Ps30',  # Static pressure at HPC outlet (psia)
+        Column.phi: 'phi',  # Ratio of fuel flow to Ps30 (pps/psi)
+        Column.NRf: 'NRf',  # Corrected fan speed (rpm)
+        Column.NRc: 'NRc',  # Corrected core speed (rpm)
+        Column.BPR: 'BPR',  # Bypass Ratio (--)
+        Column.farB: 'farB',  # Burner fuel-air ratio (--)
+        Column.htBleed: 'htBleed',  # Bleed Enthalpy (--)
+        Column.Nf_dmd: 'Nf_dmd',  # Demanded fan speed (rpm)
+        Column.PCNfR_dmd: 'PCNfR_dmd',  # Demanded corrected fan speed (rpm)
+        Column.W31: 'W31',  # HPT coolant bleed (lbm/s)
+        Column.W32: 'W32',  # LPT coolant bleed (lbm/s)
+        }
 
 # Feature Engineered Columns:
 RUL_COLUMN = "RUL"
 RUL_CLIPPED_COLUMN = "RUL_CLIPPED"
 CONDITIONS_COLUMN = "Operational Condition"
+CYCLES_CURRENT_COND = "Cycles In Current Condition"
 
 # Constants from given data
 NUM_OPERATIONAL_CONDITIONS = 6
@@ -117,7 +118,7 @@ def LoadData(debug=False):
     for i in range(TRAINING_FILE_COUNT):
         if (i > 0):
             df_train_files[i][Column.UnitNumber.value] += \
-                df_train_files[i-1][Column.UnitNumber.value].max()
+                    df_train_files[i-1][Column.UnitNumber.value].max()
 
     print("Merging data sets...")
     # The data can now be merged into a single data set as we have unique 
@@ -154,7 +155,12 @@ def PrepareData(df_train, debug=False):
     df_train.columns = list(COLUMN_NAMES.values())
     print(list(df_train.columns))
 
+    print("Sorting data by unit number and time (cycles)...")
+    # Ensure data is sorted
+    df_train = df_train.sort_values([COLUMN_NAMES[Column.UnitNumber], 
+                                   COLUMN_NAMES[Column.TimeCycles]]).reset_index(drop=True)
     if debug:
+        print(df_train)
         print(df_train.describe())
     return df_train
 
@@ -210,14 +216,14 @@ def FeatureEngineering(df_train, debug=False):
             cluster_data = df_train[df_train[CONDITIONS_COLUMN] == cluster]
 
             ax.scatter(
-                cluster_data[COLUMN_NAMES[Column.Altitude]],
-                cluster_data[COLUMN_NAMES[Column.MachNumber]],
-                cluster_data[COLUMN_NAMES[Column.TRA]],
-                c=operational_conditions_colors[cluster],
-                label=f'Condition {cluster}',
-                s=50,
-                alpha=0.8
-            )
+                    cluster_data[COLUMN_NAMES[Column.Altitude]],
+                    cluster_data[COLUMN_NAMES[Column.MachNumber]],
+                    cluster_data[COLUMN_NAMES[Column.TRA]],
+                    c=operational_conditions_colors[cluster],
+                    label=f'Condition {cluster}',
+                    s=50,
+                    alpha=0.8
+                    )
         ax.set_xlabel(f"{COLUMN_NAMES[Column.Altitude]} (x1000 ft)")
         ax.set_ylabel(COLUMN_NAMES[Column.MachNumber])
         ax.set_zlabel(COLUMN_NAMES[Column.TRA])
@@ -234,11 +240,10 @@ def FeatureEngineering(df_train, debug=False):
         plt.figure(figsize=(12, 8))
         for unit in sample_units:
             unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
-            unit_data = unit_data.sort_values(COLUMN_NAMES[Column.TimeCycles])
             plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], 
-                    unit_data[CONDITIONS_COLUMN], 
-                    label=f'Unit {unit}')
-        
+                     unit_data[CONDITIONS_COLUMN], 
+                     label=f'Unit {unit}')
+
         plt.xlabel('Cycle')
         plt.ylabel('Operational Condition')
         plt.title('Operational Condition over Time for Sample Engines')
@@ -297,9 +302,6 @@ def FeatureEngineering(df_train, debug=False):
 
     def CreateRollingFeatures(df_train, sensor_columns, debug=False):
         ## Create Rolling Features
-        ###         Sort and re-index training data.
-        df_train = df_train.sort_values([COLUMN_NAMES[Column.UnitNumber], COLUMN_NAMES[Column.TimeCycles]]).reset_index(drop=True)
-
         ###         Calculate rolling features
         ###         Random Forest does not understand time or sequences by itself.
         ###         It looks at one row at a time and makes a prediction based only on the numbers in that row.
@@ -390,7 +392,7 @@ def RandomForestModel(df_train_split, df_test_split, debug=False):
             min_samples_leaf=MIN_SAMPLES_LEAF,
             max_depth=None,       # limit depth to prevent overfitting
             n_jobs=-1,            # use all CPU cores
-    )
+            )
 
     model.fit(X_train, y_train)
     if debug:
@@ -436,11 +438,10 @@ def EvaluateModel(df_test_split, model, feature_cols, X_test, y_test, debug=True
 
         for unit in sample_units:
             unit_data = df_test_split[df_test_split[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
-            unit_data = unit_data.sort_values(COLUMN_NAMES[Column.TimeCycles])
-            
+
             actual = unit_data[RUL_CLIPPED_COLUMN]
             pred = model.predict(unit_data[feature_cols])
-            
+
             plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], actual, label=f'Unit {unit} - Actual', linestyle='-', marker='o')
             plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], pred, label=f'Unit {unit} - Predicted', linestyle='--')
 
