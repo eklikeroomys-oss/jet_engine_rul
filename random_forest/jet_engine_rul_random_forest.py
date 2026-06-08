@@ -5,10 +5,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import random
+import seaborn as sns
 
 from enum import Enum
 from mpl_toolkits.mplot3d import Axes3D
 from pathlib import Path
+from pandas.core.window import rolling
 from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score, silhouette_score
@@ -104,10 +106,11 @@ OPERATIONAL_PARAMS = [COLUMN_NAMES[Column.Altitude], COLUMN_NAMES[Column.MachNum
 # Parameter Tuning:
 WINDOW_SIZE = 10
 MIN_SAMPLES_LEAF = 4
-TRAINING_FILE_COUNT = 4
+TRAINING_FILE_COUNT = 1
 RANDOM_STATE = 42
 SILHOUETTE_SCORE_SAMPLE_SIZE = 5000
 SENSOR_VARIANCE_LIMIT = 100
+RUL_LIMIT = 130
 
 def printHeading(heading):
     c = "#"
@@ -200,7 +203,7 @@ def FeatureEngineering(df_train, debug=False):
 
         # We see from the plot above that most engines fail between ~150 and 280 cycles. The most common lifespan is around 200 cycles. 
         # Very few engines last 400-550 cycles.
-        # Engines start failing at about 128 cycles, so we should be able to clip RUL <= 130 cycles.
+        # Engines start failing at about 128 cycles, so we should be able to clip RUL <= RUL_LIMIT cycles.
         return df_train
 
     def ClusterOperationalConditions(df_train, debug=False):
@@ -247,10 +250,10 @@ def FeatureEngineering(df_train, debug=False):
         plt.savefig(f"{OUTPUT_DIR}/Operational_Condition_Clusters.png", bbox_inches='tight', dpi=300)
         plt.close()
 
-        print("Dropping operational parameter columns, we are satisfied with the clustering...")
+        print("\tDropping operational parameter columns, we are satisfied with the clustering...")
         df_train = df_train.drop(columns=OPERATIONAL_PARAMS)
 
-        print("Plotting operational condition over cycles for a few sample engines...")
+        print("\tPlotting operational condition over cycles for a few sample engines...")
         sample_units = random.sample(list(df_train[COLUMN_NAMES[Column.UnitNumber]].unique()), 10)
         plt.figure(figsize=(12, 8))
         for unit in sample_units:
@@ -272,10 +275,10 @@ def FeatureEngineering(df_train, debug=False):
         if debug:
             print(df_train)
 
-        return df_train
+        return df_train, sample_units
 
-    def AddConditionCycleFeatures(df_train, debug=False):
-        print("Adding cumulative cycles per operational condition...")
+    def AddConditionCycleFeatures(df_train, sample_units, debug=False):
+        print("\nAdding cumulative cycles per operational condition...")
         
         # 2. Cumulative cycles for EACH of the 6 conditions
         for cond in range(NUM_OPERATIONAL_CONDITIONS):
@@ -290,10 +293,7 @@ def FeatureEngineering(df_train, debug=False):
                           [f'Cumul_Cycles_Cond_{i}' for i in range(NUM_OPERATIONAL_CONDITIONS)]
             print(df_train[cols_to_show].head(15))
         
-        print("Plotting cumulative cycles per condition for sample engines...")
-        
-        # Pick 4 random engines
-        sample_units = random.sample(list(df_train[COLUMN_NAMES[Column.UnitNumber]].unique()), 1)
+        print("\tPlotting cumulative cycles per condition for sample engines...")
         
         for unit in sample_units:
             unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
@@ -323,7 +323,7 @@ def FeatureEngineering(df_train, debug=False):
         return df_train
 
     def ClipRUL(df_train, debug=False):
-        rul_limit = 130
+        rul_limit = RUL_LIMIT
         print(f"\nClipping RUL at a maximum of {rul_limit} cycles...")
         df_train[RUL_CLIPPED_COLUMN] = df_train[RUL_COLUMN].clip(upper=rul_limit)
 
@@ -341,24 +341,24 @@ def FeatureEngineering(df_train, debug=False):
 
         return df_train
 
-    def DropLowVarianceSensors(df_train, debug=False):
-        printHeading("Dropping Low Variance Sensors")
+    def DropLowVarianceSensors(df_train, sample_units, debug=False):
+        print("\nDropping low variance sensors...")
 
         sensor_columns = [COLUMN_NAMES[col] for col in Column if Column.T2.value <= col.value <= Column.W32.value]
 
         # Plot sensor data for a few units:
-        sample_units = random.sample(list(df_train[COLUMN_NAMES[Column.UnitNumber]].unique()), 10)
+        print("\tPlotting sensor variance...")
         for s in sensor_columns:
             plt.figure(figsize=(12, 6))
             for unit in sample_units:
                 unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
-                plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], 
-                        unit_data[s].cummax(), 
+                plt.plot(unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][RUL_CLIPPED_COLUMN], 
+                        unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][s].cummax(), 
                         label=f"Unit {unit}")
                 
             plt.xlabel('Cycle')
             plt.ylabel(f'Sensor {s}')
-            plt.title(f'Sensor {s} vs. Time')
+            plt.title(f'Sensor {s} vs. RUL')
             plt.legend()
             plt.grid(True, alpha=0.3)
             plt.savefig(f"{OUTPUT_DIR}/Sensor_{s}_vs_Time.png", 
@@ -371,7 +371,6 @@ def FeatureEngineering(df_train, debug=False):
                            COLUMN_NAMES[Column.farB],
                            COLUMN_NAMES[Column.Nf_dmd],
                            COLUMN_NAMES[Column.Nf],
-                           COLUMN_NAMES[Column.NRf],
                            COLUMN_NAMES[Column.P2],
                            COLUMN_NAMES[Column.P15],
                            COLUMN_NAMES[Column.PCNfR_dmd],
@@ -387,64 +386,131 @@ def FeatureEngineering(df_train, debug=False):
 
         return df_train, sensor_columns
 
-    def CreateRollingFeatures(df_train, sensor_columns, debug=False):
-        ## Create Rolling Features
-        ###         Calculate rolling features
-        ###         Random Forest does not understand time or sequences by itself.
-        ###         It looks at one row at a time and makes a prediction based only on the numbers in that row.
-        ###
-        ###         Having only the current sensor readings (e.g. temperature, pressure at cycle 150), the model 
-        ###         has no idea whether those values are:
-        ###          * Normal (early in the engine’s life), or
-        ###          * Getting worse (late in life, close to failure).
-        ###         It cannot see the trend or history.
-        ###
-        ###         Rolling features give the model:
-        ###          * The average value over the last X cycles
-        ###          * Quantifies the recent change in a value
-        ###          * Stability of a value
-        ###
-        ###         This gives the model context about degradation, which is the key signal for predicting 
-        ###         Remaining Useful Life (RUL).
-        ###
-        ###         Without these, Random Forest will perform quite poorly. With them, it becomes much 
-        ###         smarter at detecting when an engine is starting to fail.
+    def CreateRollingFeatures(df_train, sensor_columns, sample_units, debug=False):
+        print("\nCreating rolling features...")
+        # Random Forest does not understand time or sequences by itself.
+        # It looks at one row at a time and makes a prediction based only on the numbers in that row.
+        #
+        # Having only the current sensor readings (e.g. temperature, pressure at cycle 150), the model 
+        # has no idea whether those values are:
+        # * Normal (early in the engine’s life), or
+        # * Getting worse (late in life, close to failure).
+        # It cannot see the trend or history.
+        #
+        # Rolling features give the model:
+        # * The average value over the last X cycles
+        # * Quantifies the recent change in a value
+        # * Stability of a value
+        #
+        # This gives the model context about degradation, which is the key signal for predicting 
+        # Remaining Useful Life (RUL).
+        #
+        # Without these, Random Forest will perform quite poorly. With them, it becomes much 
+        # smarter at detecting when an engine is starting to fail.
+
+        rolling_features = []
+        # def add_rolling_features(group):
+        #     for c in sensor_columns:
+        #         group[f"{c}_ROLL_MEAN"] = group[c].expanding().mean()
+        #         rolling_features.append(f"{c}_ROLL_MEAN")
+        #         group[f"{c}_ROLL_STD"] = group[c].expanding().std()
+        #         rolling_features.append(f"{c}_ROLL_STD")
+
+        #         group[f"{c}_ROLL_MIN"] = group[c].cummin()
+        #         rolling_features.append(f"{c}_ROLL_MIN")
+        #         group[f"{c}_ROLL_MAX"] = group[c].cummax()
+        #         rolling_features.append(f"{c}_ROLL_MAX")
+        #     return group
+
+        # df_train = df_train.groupby(COLUMN_NAMES[Column.UnitNumber]).apply(add_rolling_features).reset_index()
+        # df_train = df_train.drop(columns=['level_1'])
+        # df_train = df_train.bfill()
+
+        for c in sensor_columns:
+            df_train[f"{c}_ROLL_MIN"] = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].cummin()
+            df_train[f"{c}_ROLL_MAX"] = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].cummax()
+
+            rolling_features.append(f"{c}_ROLL_MIN")
+            rolling_features.append(f"{c}_ROLL_MAX")
 
 
-        def add_rolling_features(group):
-            for c in sensor_columns:
-                group[f"{c}_ROLL_MEAN"] = group[c].rolling(window=WINDOW_SIZE, min_periods=1).mean()
-                group[f"{c}_ROLL_STD"] = group[c].rolling(window=WINDOW_SIZE, min_periods=1).std()
-                # group[f"{c}_ROLL_MIN"] = group[c].rolling(window=window_size, min_periods=1).min()  # Min/max features overdominant, resulting in overfitting, removed.
-                # group[f"{c}_ROLL_MAX"] = group[c].rolling(window=window_size, min_periods=1).max()  # Min/max features overdominant, resulting in overfitting, removed.
+        # Plot rolling sensor data for a few units:
+        print("\tPlotting rolling features...")
+        for i in range(len(sensor_columns)):
+            s = sensor_columns[i]
+            plt.figure(figsize=(12, 6))
+            rolling_postfixes = ["_ROLL_MIN", "_ROLL_MAX"]
+            for j in range(len(rolling_postfixes)):
+                plt.subplot(2, 2, j+1)
+                for unit in sample_units:
+                    unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
+                    plt.plot(unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][RUL_CLIPPED_COLUMN], 
+                            unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][f"{s}{rolling_postfixes[j]}"], 
+                            label=f"Unit {unit}")
+                    plt.title(f"{s}{rolling_postfixes[j]}")
+                    
+            plt.suptitle(f'Rolling Sensor {s} vs. RUL')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.savefig(f"{OUTPUT_DIR}/Rolling_Sensor_{s}_vs_Time.png", 
+                       bbox_inches='tight', dpi=300)
+            plt.close()
 
-                group[f'{c}_DELTA'] = group[c].diff(periods=1) # change from previous cycle
-                group[f'{c}_ROLL_SLOPE'] = group[c].diff(WINDOW_SIZE) / WINDOW_SIZE
-            return group
+        return df_train, rolling_features
 
-        df_train = df_train.groupby(COLUMN_NAMES[Column.UnitNumber]).apply(add_rolling_features).reset_index()
-        df_train = df_train.drop(columns=['level_1'])
-        df_train = df_train.bfill()
+    def DropLowCorrelationSensors(df_train, sample_units, sensor_columns, rolling_features, debug=False):
+        print("\nDropping low correlation sensors...")
 
-        return df_train
+        roll_min_cols = [c for c in rolling_features if c.endswith("_ROLL_MIN")]
+        roll_max_cols = [c for c in rolling_features if c.endswith("_ROLL_MAX")]
+        for i in range(len(sample_units)):
+            unit = sample_units[i]
+            unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit]
+
+            def PlotCorrelation(name, columns, debug=False):
+                print(f"\tPlotting correlation between RUL and {name} for unit {unit}...")
+                if debug:
+                    print(columns)
+                sns.heatmap(abs(unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][columns + [RUL_COLUMN]].corr()))
+                plt.title(f"RUL vs. {name} Correlation (Unit {unit})")
+                plt.savefig(f"{OUTPUT_DIR}/RUL_{name.replace(" ", "_")}_Correlation_{i+1}.png", 
+                           bbox_inches='tight', dpi=300)
+                plt.close()
+
+            PlotCorrelation("High Variance Sensor Columns", sensor_columns)
+
+            PlotCorrelation("Rolling Minimum Columns", roll_min_cols)
+            PlotCorrelation("Rolling Maximum Columns", roll_max_cols)
+            # All of these seem to correlate well with RUL, keeping them.
+
+        # The following columns often correlates weakly with RUL, removing them:
+        sensor_columns.remove(COLUMN_NAMES[Column.Nc])
+        sensor_columns.remove(COLUMN_NAMES[Column.NRf])
+        sensor_columns.remove(COLUMN_NAMES[Column.NRc])
+        sensor_columns.extend(roll_min_cols)
+        sensor_columns.extend(roll_max_cols)
+
+        # The minimum and maximum columns correlate well, we will add them to the features list:
+        sensor_columns.extend(roll_min_cols)
+        return df_train, sensor_columns
+
 
     df_train = CalculateRUL(df_train)
     df_train = ClipRUL(df_train)
-    df_train = ClusterOperationalConditions(df_train)
-    df_train = AddConditionCycleFeatures(df_train)
-    df_train, sensor_columns = DropLowVarianceSensors(df_train)
-    #df_train = CreateRollingFeatures(df_train, sensor_columns)
-    sensor_columns = []
-    return df_train, sensor_columns
+    df_train, sample_units = ClusterOperationalConditions(df_train)
+    df_train = AddConditionCycleFeatures(df_train, sample_units)
+    df_train, sensor_columns = DropLowVarianceSensors(df_train, sample_units)
+    df_train, rolling_features = CreateRollingFeatures(df_train, sensor_columns, sample_units)
+    df_train, feature_columns = DropLowCorrelationSensors(df_train, sample_units, sensor_columns, rolling_features)
+    return df_train, feature_columns
 
 def TrainTestSplit(df_train, debug=False):
-    ## Train/Test Split
+    printHeading("Train/Test Split")
     unique_units = df_train[COLUMN_NAMES[Column.UnitNumber]].unique()
     train_units, test_units = train_test_split(unique_units, test_size=0.20, random_state=RANDOM_STATE)
     df_train_split = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]].isin(train_units)].copy()
     df_test_split = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]].isin(test_units)].copy()
-    if debug:
-        print(f"Train engines: {len(train_units)}, Test engines: {len(test_units)}")
+    print(f"Train engines: {len(train_units)}, Test engines: {len(test_units)}")
     return df_train_split, df_test_split
 
 def RandomForestModel(df_train_split, df_test_split, debug=False):
@@ -541,14 +607,10 @@ def EvaluateModel(df_test_split, model, feature_cols, X_test, y_test, debug=True
         plt.show()
     plot_predictions_random_engines(df_test_split)
 
-
-
 df_train = LoadData()
 df_train = PrepareData(df_train)
 df_train, sensor_columns = FeatureEngineering(df_train)
-
-#df_train = df_train[df_train[CONDITIONS_COLUMN] == 0]
-#df_train_split, df_test_split = TrainTestSplit(df_train)
+df_train_split, df_test_split = TrainTestSplit(df_train)
 #model, feature_cols, X_test, y_test, X_train, y_train = RandomForestModel(df_train_split, df_test_split)
 
 #EvaluateModel(df_train_split, model, feature_cols, X_train, y_train)
