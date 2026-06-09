@@ -411,45 +411,44 @@ def FeatureEngineering(df_train, debug=False):
 
         return df_train, sensor_columns, feature_columns
 
-    def AddRatioFeatures(df_train, sensor_columns, sample_units, debug=False):
+    def AddRatioFeatures(df_train, sensor_columns, feature_columns, sample_units, debug=False):
         print("\nAdding some ratio sensors...")
-
-        df_train[RATIO_T24_T2] = df_train[COLUMN_NAMES[Column.T24]] / df_train[COLUMN_NAMES[Column.T2]]
-        df_train[RATIO_T30_T24] = df_train[COLUMN_NAMES[Column.T30]] / df_train[COLUMN_NAMES[Column.T24]]
-        df_train[RATIO_T50_T30] = df_train[COLUMN_NAMES[Column.T50]] / df_train[COLUMN_NAMES[Column.T30]]
-        df_train[RATIO_T50_T2] = df_train[COLUMN_NAMES[Column.T50]] / df_train[COLUMN_NAMES[Column.T2]]
-
-        df_train[RATIO_W32_W31] = df_train[COLUMN_NAMES[Column.W32]] / df_train[COLUMN_NAMES[Column.W31]]
+        df_train[RATIO_T24_T2] = df_train[f"{COLUMN_NAMES[Column.T24]}_EMA_SMOOTH"] / df_train[f"{COLUMN_NAMES[Column.T2]}_EMA_SMOOTH"]
+        df_train[RATIO_T30_T24] = df_train[f"{COLUMN_NAMES[Column.T30]}_EMA_SMOOTH"] / df_train[f"{COLUMN_NAMES[Column.T24]}_EMA_SMOOTH"]
+        df_train[RATIO_T50_T30] = df_train[f"{COLUMN_NAMES[Column.T50]}_EMA_SMOOTH"] / df_train[f"{COLUMN_NAMES[Column.T30]}_EMA_SMOOTH"]
+        df_train[RATIO_T50_T2] = df_train[f"{COLUMN_NAMES[Column.T50]}_EMA_SMOOTH"] / df_train[f"{COLUMN_NAMES[Column.T2]}_EMA_SMOOTH"]
+        df_train[RATIO_W32_W31] = df_train[f"{COLUMN_NAMES[Column.W32]}_EMA_SMOOTH"] / df_train[f"{COLUMN_NAMES[Column.W31]}_EMA_SMOOTH"]
 
         ratio_columns = [RATIO_W32_W31, RATIO_T50_T2, RATIO_T50_T30, RATIO_T30_T24, RATIO_T24_T2]
 
         # Plot sensor data for a few units:
-        print("\tPlotting ratio variance...")
+        print("\tPlotting ratio data...")
         for s in ratio_columns:
             plt.figure(figsize=(12, 6))
             for unit in sample_units:
                 unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
-                plt.plot(unit_data[RUL_CLIPPED_COLUMN], 
-                        unit_data[s],
-                        label=f"Unit {unit}")
+                plt.plot(unit_data[RUL_COLUMN], 
+                         unit_data[s],
+                         label=f"Unit {unit}")
                 
             plt.xlabel('RUL')
             plt.ylabel(f'{s}')
             plt.title(f'{s} vs. RUL')
             plt.legend()
             plt.grid(True, alpha=0.3)
-            plt.savefig(f"{OUTPUT_DIR}/{s}_vs_Time_1.png", 
+            plt.savefig(f"{OUTPUT_DIR}/Ratio_{s}_vs_RUL.png", 
                        bbox_inches='tight', dpi=300)
             plt.close()
 
         # Some of the ratio features look promising:
         sensor_columns.extend([RATIO_T50_T30, RATIO_T50_T2, RATIO_T30_T24, RATIO_T24_T2])
+        feature_columns.extend([RATIO_T50_T30, RATIO_T50_T2, RATIO_T30_T24, RATIO_T24_T2])
 
         if debug:
             print(df_train)
             print(df_train.describe())
 
-        return df_train, sensor_columns
+        return df_train, sensor_columns, feature_columns
 
     def CreateRollingFeatures(df_train, sensor_columns, feature_columns, sample_units, debug=False):
         print("\nCreating rolling features...")
@@ -621,8 +620,8 @@ def FeatureEngineering(df_train, debug=False):
     df_train, sample_units = ClusterOperationalConditions(df_train)
     df_train = AddConditionCycleFeatures(df_train, sample_units)
     df_train, sensor_columns, feature_columns = SmoothSensorData(df_train, sample_units)
-    df_train, sensor_columns = AddRatioFeatures(df_train, sensor_columns, sample_units)
-    df_train, feature_columns = CreateRollingFeatures(df_train, sensor_columns, feature_columns, sample_units)
+    df_train, sensor_columns, feature_columns = AddRatioFeatures(df_train, sensor_columns, feature_columns, sample_units)
+    #df_train, feature_columns = CreateRollingFeatures(df_train, sensor_columns, feature_columns, sample_units)
 
     print(feature_columns)
     return df_train, feature_columns, sample_units
@@ -720,7 +719,7 @@ def EvaluateModel(df, model, X, y, feature_cols, identifier, debug=True):
 df_train = LoadData()
 df_train = PrepareData(df_train)
 df_train, feature_columns, sample_units = FeatureEngineering(df_train)
-df_train_split, df_test_split = TrainTestSplit(df_train)
-model, feature_cols, X_test, y_test, X_train, y_train = RandomForestModel(df_train_split, df_test_split, feature_columns)
-EvaluateModel(df_train_split, model, X_train, y_train, feature_cols, "Training Split")
-EvaluateModel(df_test_split, model, X_test, y_test, feature_cols, "Testing Split")
+#df_train_split, df_test_split = TrainTestSplit(df_train)
+#model, feature_cols, X_test, y_test, X_train, y_train = RandomForestModel(df_train_split, df_test_split, feature_columns)
+#EvaluateModel(df_train_split, model, X_train, y_train, feature_cols, "Training Split")
+#EvaluateModel(df_test_split, model, X_test, y_test, feature_cols, "Testing Split")
