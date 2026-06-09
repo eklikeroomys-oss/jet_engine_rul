@@ -116,13 +116,13 @@ TOTAL_COND_CYCLE_COLS = [
 # Constants from given data
 NUM_OPERATIONAL_CONDITIONS = 6
 OPERATIONAL_PARAMS = [COLUMN_NAMES[Column.Altitude], COLUMN_NAMES[Column.MachNumber], COLUMN_NAMES[Column.TRA]]
-
-# Parameter Tuning:
 SILHOUETTE_SCORE_SAMPLE_SIZE = 5000 # Silhouette score sample size for operational condition clustering.
 RANDOM_STATE = 42
-MEAN_WINDOW = 30 # 
+
+# Parameter Tuning:
+EMA_SPAN = 5 # EMA span for filtering out white noise without flattening critical curves near EOL.
+MEAN_WINDOW = 5 # 
 STD_WINDOW = 5 # 
-EMA_SPAN = 15 # EMA span for filtering out white noise without flattening critical curves near EOL.
 RUL_LIMIT = 150
 SAMPLE_UNITS = 25
 
@@ -384,65 +384,14 @@ def FeatureEngineering(df_train, debug=False):
                        bbox_inches='tight', dpi=300)
             plt.close()
 
-
-        # The following smoothed sensor data looks promising, add them as features:
-        feature_columns = [
-                "farB_EMA_SMOOTH",
-                "htBleed_EMA_SMOOTH",
-                "Nc_EMA_SMOOTH",
-                "NRc_EMA_SMOOTH",
-                "Ps30_EMA_SMOOTH",
-                "T24_EMA_SMOOTH",
-                "T30_EMA_SMOOTH",
-                "T50_EMA_SMOOTH",
-                ]
-
         if debug:
             print(df_train)
             print(df_train.describe())
 
-        return df_train, sensor_columns, feature_columns
+        return df_train, sensor_columns
 
-    def AddRatioFeatures(df_train, sensor_columns, feature_columns, sample_units, debug=False):
-        print("\nAdding some ratio sensors...")
-        df_train[RATIO_T24_T2] = df_train[f"{COLUMN_NAMES[Column.T24]}_EMA_SMOOTH"] / df_train[f"{COLUMN_NAMES[Column.T2]}_EMA_SMOOTH"]
-        df_train[RATIO_T30_T24] = df_train[f"{COLUMN_NAMES[Column.T30]}_EMA_SMOOTH"] / df_train[f"{COLUMN_NAMES[Column.T24]}_EMA_SMOOTH"]
-        df_train[RATIO_T50_T30] = df_train[f"{COLUMN_NAMES[Column.T50]}_EMA_SMOOTH"] / df_train[f"{COLUMN_NAMES[Column.T30]}_EMA_SMOOTH"]
-        df_train[RATIO_T50_T2] = df_train[f"{COLUMN_NAMES[Column.T50]}_EMA_SMOOTH"] / df_train[f"{COLUMN_NAMES[Column.T2]}_EMA_SMOOTH"]
-        df_train[RATIO_W32_W31] = df_train[f"{COLUMN_NAMES[Column.W32]}_EMA_SMOOTH"] / df_train[f"{COLUMN_NAMES[Column.W31]}_EMA_SMOOTH"]
 
-        ratio_columns = [RATIO_W32_W31, RATIO_T50_T2, RATIO_T50_T30, RATIO_T30_T24, RATIO_T24_T2]
-
-        # Plot sensor data for a few units:
-        print("\tPlotting ratio data...")
-        for s in ratio_columns:
-            plt.figure(figsize=(12, 6))
-            for unit in sample_units:
-                unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
-                plt.plot(unit_data[RUL_COLUMN], 
-                         unit_data[s],
-                         label=f"Unit {unit}")
-                
-            plt.xlabel('RUL')
-            plt.ylabel(f'{s}')
-            plt.title(f'{s} vs. RUL')
-            plt.legend()
-            plt.grid(True, alpha=0.3)
-            plt.savefig(f"{OUTPUT_DIR}/Ratio_{s}_vs_RUL.png", 
-                       bbox_inches='tight', dpi=300)
-            plt.close()
-
-        # Some of the ratio features look promising:
-        sensor_columns.extend([RATIO_T50_T30, RATIO_T50_T2, RATIO_T30_T24, RATIO_T24_T2])
-        feature_columns.extend([RATIO_T50_T30, RATIO_T50_T2, RATIO_T30_T24, RATIO_T24_T2])
-
-        if debug:
-            print(df_train)
-            print(df_train.describe())
-
-        return df_train, sensor_columns, feature_columns
-
-    def AddRollingFeatures(df_train, sensor_columns, feature_columns, sample_units, debug=False):
+    def AddRollingFeatures(df_train, sensor_columns, sample_units, debug=False):
         print("\nCreating rolling features...")
         # Random Forest does not understand time or sequences by itself.
         # It looks at one row at a time and makes a prediction based only on the numbers in that row.
@@ -482,12 +431,13 @@ def FeatureEngineering(df_train, debug=False):
             return covariance / variance
 
         print("\tCalculating rolling features...")
-        for c in feature_columns:
-            roll_mean = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=MEAN_WINDOW, min_periods=1).mean())
-            roll_std = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=STD_WINDOW, min_periods=1).std())
+        for c in sensor_columns:
+            smoothed = f"{c}_EMA_SMOOTH"
+            roll_mean = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[smoothed].transform(lambda x: x.rolling(window=MEAN_WINDOW, min_periods=1).mean())
+            roll_std = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[smoothed].transform(lambda x: x.rolling(window=STD_WINDOW, min_periods=1).std())
 
-            roll_mean.name = f"{c}_ROLL_MEAN"
-            roll_std.name = f"{c}_ROLL_STD"
+            roll_mean.name = f"{smoothed}_ROLL_MEAN"
+            roll_std.name = f"{smoothed}_ROLL_STD"
 
             df_train = pd.concat([df_train, roll_mean], axis=1)
             df_train = pd.concat([df_train, roll_std], axis=1)
@@ -495,7 +445,8 @@ def FeatureEngineering(df_train, debug=False):
 
         # Plot rolling sensor data for a few units:
         print("\tPlotting rolling features...")
-        for s in feature_columns:
+        for s in sensor_columns:
+            smoothed = f"{s}_EMA_SMOOTH"
             plt.figure(figsize=(20, 20))
             rolling_postfixes = ["", "_ROLL_MEAN", "_ROLL_STD"]
             for j in range(len(rolling_postfixes)):
@@ -503,56 +454,81 @@ def FeatureEngineering(df_train, debug=False):
                 for unit in sample_units:
                     unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
                     plt.plot(unit_data[RUL_COLUMN], 
-                            unit_data[f"{s}{rolling_postfixes[j]}"], 
+                            unit_data[f"{smoothed}{rolling_postfixes[j]}"], 
                             label=f"Unit {unit}")
-                    plt.title(f"{s}{rolling_postfixes[j]}")
+                    plt.title(f"{smoothed}{rolling_postfixes[j]}")
                     
-            plt.suptitle(f'Rolling Sensor {s} vs. RUL')
+            plt.suptitle(f'Rolling Sensor {smoothed} vs. RUL')
             plt.legend()
             plt.grid(True, alpha=0.3)
-            plt.savefig(f"{OUTPUT_DIR}/Rolling_Sensor_{s}_vs_Time.png", 
+            plt.savefig(f"{OUTPUT_DIR}/Rolling_Sensor_{smoothed}_vs_Time.png", 
                        bbox_inches='tight', dpi=300)
             plt.close()
 
 
-        # The following rolling features look promising:
-        feature_columns.extend([
-                "farB_EMA_SMOOTH_ROLL_MEAN",
-                "farB_EMA_SMOOTH_ROLL_STD",
+        # The following features look promising:
+        feature_columns = [
+                
+                "BPR_EMA_SMOOTH",
+                "BPR_EMA_SMOOTH_ROLL_MEAN",
+                "BPR_EMA_SMOOTH_ROLL_STD",
 
+                "htBleed_EMA_SMOOTH",
                 "htBleed_EMA_SMOOTH_ROLL_MEAN",
                 "htBleed_EMA_SMOOTH_ROLL_STD",
 
+                "Nc_EMA_SMOOTH",
                 "Nc_EMA_SMOOTH_ROLL_MEAN",
                 "Nc_EMA_SMOOTH_ROLL_STD",
 
+                "Nf_EMA_SMOOTH",
+                "Nf_EMA_SMOOTH_ROLL_MEAN",
+                "Nf_EMA_SMOOTH_ROLL_STD",
+
+                "NRc_EMA_SMOOTH",
                 "NRc_EMA_SMOOTH_ROLL_MEAN",
                 "NRc_EMA_SMOOTH_ROLL_STD",
 
+                "NRf_EMA_SMOOTH",
+                "NRf_EMA_SMOOTH_ROLL_MEAN",
+                "NRf_EMA_SMOOTH_ROLL_STD",
+
+                "P15_EMA_SMOOTH",
+                "P15_EMA_SMOOTH_ROLL_MEAN",
+                "P15_EMA_SMOOTH_ROLL_STD",
+
+                "P30_EMA_SMOOTH",
+                "P30_EMA_SMOOTH_ROLL_MEAN",
+                "P30_EMA_SMOOTH_ROLL_STD",
+
+                "phi_EMA_SMOOTH",
+                "phi_EMA_SMOOTH_ROLL_MEAN",
+                "phi_EMA_SMOOTH_ROLL_STD",
+
+                "Ps30_EMA_SMOOTH",
                 "Ps30_EMA_SMOOTH_ROLL_MEAN",
                 "Ps30_EMA_SMOOTH_ROLL_STD",
 
+                "T24_EMA_SMOOTH",
                 "T24_EMA_SMOOTH_ROLL_MEAN",
                 "T24_EMA_SMOOTH_ROLL_STD",
-
-                "T24_vs_T2_ROLL_MEAN",
-                "T24_vs_T2_ROLL_STD",
                 
+                "T30_EMA_SMOOTH",
                 "T30_EMA_SMOOTH_ROLL_MEAN",
                 "T30_EMA_SMOOTH_ROLL_STD",
-                
-                "T30_vs_T24_ROLL_MEAN",
-                "T30_vs_T24_ROLL_STD",
 
+                "T50_EMA_SMOOTH",
+                "T50_EMA_SMOOTH_ROLL_MEAN",
                 "T50_EMA_SMOOTH_ROLL_STD",
 
-                "T50_vs_T2_ROLL_MEAN",
-                "T50_vs_T2_ROLL_STD",
+                "W31_EMA_SMOOTH",
+                "W31_EMA_SMOOTH_ROLL_MEAN",
+                "W31_EMA_SMOOTH_ROLL_STD",
 
-                "T50_vs_T30_ROLL_MEAN",
-                "T50_vs_T30_ROLL_STD",
-                ])
-                
+                "W32_EMA_SMOOTH",
+                "W32_EMA_SMOOTH_ROLL_MEAN",
+                "W32_EMA_SMOOTH_ROLL_STD",
+                ]
 
         return df_train, feature_columns
 
@@ -561,11 +537,9 @@ def FeatureEngineering(df_train, debug=False):
     df_train = ClipRUL(df_train)
     df_train, sample_units = ClusterOperationalConditions(df_train)
     df_train = AddConditionCycleFeatures(df_train, sample_units)
-    df_train, sensor_columns, feature_columns = SmoothSensorData(df_train, sample_units)
-    df_train, sensor_columns, feature_columns = AddRatioFeatures(df_train, sensor_columns, feature_columns, sample_units)
-    df_train, feature_columns = AddRollingFeatures(df_train, sensor_columns, feature_columns, sample_units)
+    df_train, sensor_columns = SmoothSensorData(df_train, sample_units)
+    df_train, feature_columns = AddRollingFeatures(df_train, sensor_columns, sample_units)
 
-    print(feature_columns)
     return df_train, feature_columns, sample_units
 
 def TrainTestSplit(df_train, debug=False):
