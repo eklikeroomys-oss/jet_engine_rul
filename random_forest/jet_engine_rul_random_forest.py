@@ -1,6 +1,8 @@
 # Jet Engine RUL Using NASA CMAPSS Data
 # "Data URL: https://data.nasa.gov/dataset/cmapss-jet-engine-simulated-data"
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -450,7 +452,7 @@ def FeatureEngineering(df_train, debug=False):
 
         return df_train, sensor_columns, feature_columns
 
-    def CreateRollingFeatures(df_train, sensor_columns, feature_columns, sample_units, debug=False):
+    def AddRollingFeatures(df_train, sensor_columns, feature_columns, sample_units, debug=False):
         print("\nCreating rolling features...")
         # Random Forest does not understand time or sequences by itself.
         # It looks at one row at a time and makes a prediction based only on the numbers in that row.
@@ -489,33 +491,20 @@ def FeatureEngineering(df_train, debug=False):
 
             return covariance / variance
 
-        print("\tCalculating rolling features for operational parameters...")
-        for c in OPERATIONAL_PARAMS:
-            roll_mean = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=WINDOW_SIZE, min_periods=1).mean())
-            roll_mean.name = f"{c}_ROLL_MEAN"
-            df_train = pd.concat([df_train, roll_mean], axis=1)
-
-
-        print("\tCalculating rolling features for sensors...")
-        for c in sensor_columns:
-            cumu_min = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].cummin()
-            cumu_max = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].cummax()
+        print("\tCalculating rolling features...")
+        for c in feature_columns:
             roll_min = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=WINDOW_SIZE, min_periods=1).min())
             roll_max = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=WINDOW_SIZE, min_periods=1).max())
             roll_mean = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=WINDOW_SIZE, min_periods=1).mean())
             roll_std = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=WINDOW_SIZE, min_periods=1).std())
             roll_var = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=WINDOW_SIZE, min_periods=1).var())
 
-            cumu_min.name = f"{c}_CUMU_MIN"
-            cumu_max.name = f"{c}_CUMU_MAX"
             roll_min.name = f"{c}_ROLL_MIN"
             roll_max.name = f"{c}_ROLL_MAX"
             roll_mean.name = f"{c}_ROLL_MEAN"
             roll_std.name = f"{c}_ROLL_STD"
             roll_var.name = f"{c}_ROLL_VAR"
 
-            df_train = pd.concat([df_train, cumu_min], axis=1)
-            df_train = pd.concat([df_train, cumu_max], axis=1)
             df_train = pd.concat([df_train, roll_min], axis=1)
             df_train = pd.concat([df_train, roll_max], axis=1)
             df_train = pd.concat([df_train, roll_mean], axis=1)
@@ -523,23 +512,13 @@ def FeatureEngineering(df_train, debug=False):
             df_train = pd.concat([df_train, roll_var], axis=1)
 
 
-        print("\tCalculating rolling slopes for some rolling features...")
-        for c in sensor_columns:
-            roll_mean_slope = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[f"{c}_ROLL_MEAN"].transform(lambda x: x.rolling(window=10, min_periods=1).apply(analytical_slope, raw=True))
-            roll_max_slope = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[f"{c}_ROLL_MAX"].transform(lambda x: x.rolling(window=10, min_periods=1).apply(analytical_slope, raw=True))
-            roll_mean_slope.name = f"{c}_ROLL_MEAN_SLOPE"
-            roll_max_slope.name = f"{c}_ROLL_MAX_SLOPE"
-            df_train = pd.concat([df_train, roll_mean_slope], axis=1)
-            df_train = pd.concat([df_train, roll_max_slope], axis=1)
-
         # Plot rolling sensor data for a few units:
-        print("\tPlotting rolling sensor features...")
-        for i in range(len(sensor_columns)):
-            s = sensor_columns[i]
+        print("\tPlotting rolling features...")
+        for s in feature_columns:
             plt.figure(figsize=(20, 20))
-            rolling_postfixes = ["", "_CUMU_MIN", "_CUMU_MAX", "_ROLL_MIN", "_ROLL_MAX", "_ROLL_MEAN", "_ROLL_STD", "_ROLL_VAR", "_ROLL_MEAN_SLOPE", "_ROLL_MAX_SLOPE"]
+            rolling_postfixes = ["", "_ROLL_MIN", "_ROLL_MAX", "_ROLL_MEAN", "_ROLL_STD", "_ROLL_VAR"]
             for j in range(len(rolling_postfixes)):
-                plt.subplot(6, 2, j+1)
+                plt.subplot(3, 2, j+1)
                 for unit in sample_units:
                     unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
                     #plt.plot(unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][RUL_CLIPPED_COLUMN], 
@@ -556,60 +535,22 @@ def FeatureEngineering(df_train, debug=False):
                        bbox_inches='tight', dpi=300)
             plt.close()
 
-        print("\tPlotting rolling parameter features...")
-        for i in range(len(OPERATIONAL_PARAMS)):
-            s = OPERATIONAL_PARAMS[i]
-            plt.figure(figsize=(20, 12))
-            rolling_postfixes = ["", "_ROLL_MEAN"]
-            for j in range(len(rolling_postfixes)):
-                plt.subplot(2, 1, j+1)
-                for unit in sample_units:
-                    unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
-                    #plt.plot(unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][RUL_CLIPPED_COLUMN], 
-                            #unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][f"{s}{rolling_postfixes[j]}"], 
-                    plt.plot(unit_data[RUL_COLUMN], 
-                            unit_data[f"{s}{rolling_postfixes[j]}"], 
-                            label=f"Unit {unit}")
-                    plt.title(f"{s}{rolling_postfixes[j]}")
-                    
-            plt.suptitle(f'Rolling Param {s} vs. RUL')
-            plt.legend()
-            plt.grid(True, alpha=0.3)
-            plt.savefig(f"{OUTPUT_DIR}/Rolling_Parameter_{s}_vs_Time.png", 
-                       bbox_inches='tight', dpi=300)
-            plt.close()
 
         # The following rolling features look promising:
-        feature_columns = [
-                "farB_ROLL_STD",
-                "farB_ROLL_MEAN",
-                "farB_ROLL_VAR",
-
-                "NRc_CUMU_MAX",
-                "NRc_ROLL_MAX",
-                "NRc_ROLL_MEAN",
-                "NRc_ROLL_MAX_SLOPE",
-
-                "NRf_CUMU_MAX",
-                "NRf_ROLL_MAX",
-
-                "Ps30_CUMU_MAX",
-                #"Ps30_ROLL_MAX",  <-- Overdominant
-                "Ps30_ROLL_MEAN",
-                "Ps30_ROLL_MEAN_SLOPE",
-
-                "T50_vs_T2_CUMU_MAX",
-                "T50_vs_T2_ROLL_MAX",
+        feature_columns.extend([
+                "farB_EMA_SMOOTH_ROLL_MEAN",
+                "htBleed_EMA_SMOOTH_ROLL_MEAN",
+                "Nc_EMA_SMOOTH_ROLL_MEAN",
+                "NRc_EMA_SMOOTH_ROLL_MEAN",
+                "Ps30_EMA_SMOOTH_ROLL_MEAN",
+                "T24_EMA_SMOOTH_ROLL_MEAN",
+                "T24_vs_T2_ROLL_MEAN",
+                "T30_EMA_SMOOTH_ROLL_MEAN",
+                "T30_vs_T24_ROLL_MEAN",
+                "T50_EMA_SMOOTH_ROLL_MEAN",
                 "T50_vs_T2_ROLL_MEAN",
-
-                "T50_vs_T30_CUMU_MAX",
-                "T50_vs_T30_ROLL_MAX",
                 "T50_vs_T30_ROLL_MEAN",
-
-                "T50_CUMU_MAX",
-                "T50_ROLL_MAX",
-                "T50_ROLL_MEAN",
-                ]
+                ])
                 
 
         return df_train, feature_columns
@@ -621,7 +562,7 @@ def FeatureEngineering(df_train, debug=False):
     df_train = AddConditionCycleFeatures(df_train, sample_units)
     df_train, sensor_columns, feature_columns = SmoothSensorData(df_train, sample_units)
     df_train, sensor_columns, feature_columns = AddRatioFeatures(df_train, sensor_columns, feature_columns, sample_units)
-    #df_train, feature_columns = CreateRollingFeatures(df_train, sensor_columns, feature_columns, sample_units)
+    df_train, feature_columns = AddRollingFeatures(df_train, sensor_columns, feature_columns, sample_units)
 
     print(feature_columns)
     return df_train, feature_columns, sample_units
@@ -629,7 +570,7 @@ def FeatureEngineering(df_train, debug=False):
 def TrainTestSplit(df_train, debug=False):
     printHeading("Train/Test Split")
     unique_units = df_train[COLUMN_NAMES[Column.UnitNumber]].unique()
-    train_units, test_units = train_test_split(unique_units, test_size=0.40, random_state=RANDOM_STATE)
+    train_units, test_units = train_test_split(unique_units, test_size=TEST_SIZE, random_state=RANDOM_STATE)
     df_train_split = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]].isin(train_units)].copy()
     df_test_split = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]].isin(test_units)].copy()
     print(f"Train engines: {len(train_units)}, Test engines: {len(test_units)}")
@@ -640,16 +581,16 @@ def RandomForestModel(df_train_split, df_test_split, feature_columns, debug=Fals
 
     ## Extract X and Y data:
     target_col = RUL_CLIPPED_COLUMN
-    feature_cols = feature_columns + [CONDITIONS_COLUMN] + TOTAL_COND_CYCLE_COLS
+    feature_cols = feature_columns #+ [CONDITIONS_COLUMN] + TOTAL_COND_CYCLE_COLS
     
     print(f"Target column: {RUL_CLIPPED_COLUMN}")
     print(f"Feature columns: {feature_cols}")
 
-    X_train = df_train_split[feature_cols]
-    y_train = df_train_split[target_col]
+    X_train = df_train_split[feature_cols].values
+    y_train = df_train_split[target_col].values
 
-    X_test = df_test_split[feature_cols]
-    y_test = df_test_split[target_col]
+    X_test = df_test_split[feature_cols].values
+    y_test = df_test_split[target_col].values
 
     print(f"Training the random forest model...")
     model = RandomForestRegressor(
@@ -702,7 +643,7 @@ def EvaluateModel(df, model, X, y, feature_cols, identifier, debug=True):
         unit_data = df[df[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
 
         actual = unit_data[RUL_CLIPPED_COLUMN]
-        pred = model.predict(unit_data[feature_cols])
+        pred = model.predict(unit_data[feature_cols].values)
 
         plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], actual, label=f'Unit {unit} - Actual', linestyle='-', marker='o')
         plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], pred, label=f'Unit {unit} - Predicted', linestyle='--')
@@ -719,7 +660,7 @@ def EvaluateModel(df, model, X, y, feature_cols, identifier, debug=True):
 df_train = LoadData()
 df_train = PrepareData(df_train)
 df_train, feature_columns, sample_units = FeatureEngineering(df_train)
-#df_train_split, df_test_split = TrainTestSplit(df_train)
-#model, feature_cols, X_test, y_test, X_train, y_train = RandomForestModel(df_train_split, df_test_split, feature_columns)
-#EvaluateModel(df_train_split, model, X_train, y_train, feature_cols, "Training Split")
-#EvaluateModel(df_test_split, model, X_test, y_test, feature_cols, "Testing Split")
+df_train_split, df_test_split = TrainTestSplit(df_train)
+model, feature_cols, X_test, y_test, X_train, y_train = RandomForestModel(df_train_split, df_test_split, feature_columns)
+EvaluateModel(df_train_split, model, X_train, y_train, feature_cols, "Training Split")
+EvaluateModel(df_test_split, model, X_test, y_test, feature_cols, "Testing Split")
