@@ -221,6 +221,25 @@ def FeatureEngineering(df_train, debug=False):
         # Engines start failing at about 128 cycles, so we should be able to clip RUL <= RUL_LIMIT cycles.
         return df_train
 
+    def ClipRUL(df_train, debug=False):
+        rul_limit = RUL_LIMIT
+        print(f"\nClipping RUL at a maximum of {rul_limit} cycles...")
+        df_train[RUL_CLIPPED_COLUMN] = df_train[RUL_COLUMN].clip(upper=rul_limit)
+
+        print("Plotting the clipped RUL distribution for each Unit...")
+        max_cycles_per_unit = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[RUL_CLIPPED_COLUMN].max()
+        plt.hist(max_cycles_per_unit, bins=5)
+        plt.title('Distribution of Clipped Engine Lifespans')
+        plt.xlabel("Engine Lifespan")
+        plt.ylabel("Engine Count")
+        plt.savefig(f"{OUTPUT_DIR}/Engine_Lifespan_Clipped_Distribution.png", bbox_inches='tight', dpi=300)
+        plt.close()
+
+        if debug:
+            print(df_train.describe())
+
+        return df_train
+
     def ClusterOperationalConditions(df_train, debug=False):
         print("\nClustering the operational conditions...")
         df_operational_params = df_train[OPERATIONAL_PARAMS].copy()
@@ -288,25 +307,6 @@ def FeatureEngineering(df_train, debug=False):
             print(df_train)
 
         return df_train, sample_units
-
-    def ClipRUL(df_train, debug=False):
-        rul_limit = RUL_LIMIT
-        print(f"\nClipping RUL at a maximum of {rul_limit} cycles...")
-        df_train[RUL_CLIPPED_COLUMN] = df_train[RUL_COLUMN].clip(upper=rul_limit)
-
-        print("Plotting the clipped RUL distribution for each Unit...")
-        max_cycles_per_unit = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[RUL_CLIPPED_COLUMN].max()
-        plt.hist(max_cycles_per_unit, bins=5)
-        plt.title('Distribution of Clipped Engine Lifespans')
-        plt.xlabel("Engine Lifespan")
-        plt.ylabel("Engine Count")
-        plt.savefig(f"{OUTPUT_DIR}/Engine_Lifespan_Clipped_Distribution.png", bbox_inches='tight', dpi=300)
-        plt.close()
-
-        if debug:
-            print(df_train.describe())
-
-        return df_train
 
     def AddConditionCycleFeatures(df_train, sample_units, debug=False):
         print("\nAdding cumulative cycles per operational condition...")
