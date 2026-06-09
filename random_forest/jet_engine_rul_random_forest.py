@@ -120,7 +120,7 @@ SAMPLE_UNITS = 25
 
 TEST_SIZE = 0.3
 
-EMA_SPAN = 10 # EMA span for filtering out white noise without flattening critical curves near EOL.
+EMA_SPAN = 15 # EMA span for filtering out white noise without flattening critical curves near EOL.
 MIN_SAMPLES_LEAF = 1
 MIN_SAMPLES_SPLIT = 2
 NUM_TREES = 50
@@ -353,29 +353,10 @@ def FeatureEngineering(df_train, debug=False):
         
         return df_train
 
-    def DropLowVarianceSensors(df_train, sample_units, debug=False):
-        print("\nDropping low variance sensors...")
+    def SmoothSensorData(df_train, sample_units, debug=False):
+        print("\nSmoothing and plotting sensor data...")
 
         sensor_columns = [COLUMN_NAMES[col] for col in Column if Column.T2.value <= col.value <= Column.W32.value]
-
-        # Plot sensor data for a few units:
-        print("\tPlotting sensor variance...")
-        # for s in sensor_columns:
-        #     plt.figure(figsize=(12, 6))
-        #     for unit in sample_units:
-        #         unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
-        #         plt.plot(unit_data[RUL_COLUMN], 
-        #                 unit_data[s],
-        #                 label=f"Unit {unit}")
-                
-        #     plt.xlabel('Cycle')
-        #     plt.ylabel(f'Sensor {s}')
-        #     plt.title(f'Sensor {s} vs. RUL')
-        #     plt.legend()
-        #     plt.grid(True, alpha=0.3)
-        #     plt.savefig(f"{OUTPUT_DIR}/Sensor_{s}_vs_Time_1.png", 
-        #                bbox_inches='tight', dpi=300)
-        #     plt.close()
 
         # From the sensor data plots above we can see that the data is very noisy. We will filter the data using 
         # Exponential Moving Average (EMA)
@@ -411,25 +392,18 @@ def FeatureEngineering(df_train, debug=False):
                        bbox_inches='tight', dpi=300)
             plt.close()
 
-        # From the graphs above it looks like we can drop the following sensors as they don't seem to change much during degradation:
-        # low_var_sensors = [ 
-        #                    COLUMN_NAMES[Column.farB],
-        #                    COLUMN_NAMES[Column.Nf_dmd],
-        #                    COLUMN_NAMES[Column.Nf],
-        #                    COLUMN_NAMES[Column.NRf],
-        #                    COLUMN_NAMES[Column.P2],
-        #                    COLUMN_NAMES[Column.P15],
-        #                    COLUMN_NAMES[Column.P30],
-        #                    COLUMN_NAMES[Column.PCNfR_dmd],
-        #                    COLUMN_NAMES[Column.phi],
-        #                    COLUMN_NAMES[Column.T2],
-        #                    COLUMN_NAMES[Column.W31],
-        #                    COLUMN_NAMES[Column.W32],
-        #                    ]
 
-        # Exclude all raw sensor data as features, they are just too noisy.
-        #feature_columns = list(set(sensor_columns) - set(low_var_sensors))
-        feature_columns = []
+        # The following smoothed sensor data looks promising, add them as features:
+        feature_columns = [
+                "farB_EMA_SMOOTH",
+                "htBleed_EMA_SMOOTH",
+                "Nc_EMA_SMOOTH",
+                "NRc_EMA_SMOOTH",
+                "Ps30_EMA_SMOOTH",
+                "T24_EMA_SMOOTH",
+                "T30_EMA_SMOOTH",
+                "T50_EMA_SMOOTH",
+                ]
 
         if debug:
             print(df_train)
@@ -646,7 +620,7 @@ def FeatureEngineering(df_train, debug=False):
     df_train = ClipRUL(df_train)
     df_train, sample_units = ClusterOperationalConditions(df_train)
     df_train = AddConditionCycleFeatures(df_train, sample_units)
-    df_train, sensor_columns, feature_columns = DropLowVarianceSensors(df_train, sample_units)
+    df_train, sensor_columns, feature_columns = SmoothSensorData(df_train, sample_units)
     df_train, sensor_columns = AddRatioFeatures(df_train, sensor_columns, sample_units)
     df_train, feature_columns = CreateRollingFeatures(df_train, sensor_columns, feature_columns, sample_units)
 
