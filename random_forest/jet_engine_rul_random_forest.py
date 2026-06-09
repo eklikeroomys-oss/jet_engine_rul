@@ -52,35 +52,41 @@ class Column(Enum):
 
 # Dictionary mapping Column enum values to their string names
 COLUMN_NAMES = {
-        Column.UnitNumber: 'Unit Number',
-        Column.TimeCycles: 'Time (Cycles)',
-        Column.Altitude: 'Altitude',
-        Column.MachNumber: 'Mach Number',
-        Column.TRA: 'TRA',
-        Column.T2: 'T2',  # Total temperature at fan inlet (°R)
-        Column.T24: 'T24',  # Total temperature at LPC outlet (°R)
-        Column.T30: 'T30',  # Total temperature at HPC outlet (°R)
-        Column.T50: 'T50',  # Total temperature at LPT outlet (°R)
-        Column.P2: 'P2',  # Pressure at fan inlet (psia)
-        Column.P15: 'P15',  # Total pressure in bypass-duct (psia)
-        Column.P30: 'P30',  # Total pressure at HPC outlet (psia)
-        Column.Nf: 'Nf',  # Physical fan speed (rpm)
-        Column.Nc: 'Nc',  # Physical core speed (rpm)
-        Column.epr: 'epr',  # Engine pressure ratio (P50/P2) (--)
-        Column.Ps30: 'Ps30',  # Static pressure at HPC outlet (psia)
-        Column.phi: 'phi',  # Ratio of fuel flow to Ps30 (pps/psi)
-        Column.NRf: 'NRf',  # Corrected fan speed (rpm)
-        Column.NRc: 'NRc',  # Corrected core speed (rpm)
-        Column.BPR: 'BPR',  # Bypass Ratio (--)
-        Column.farB: 'farB',  # Burner fuel-air ratio (--)
-        Column.htBleed: 'htBleed',  # Bleed Enthalpy (--)
-        Column.Nf_dmd: 'Nf_dmd',  # Demanded fan speed (rpm)
-        Column.PCNfR_dmd: 'PCNfR_dmd',  # Demanded corrected fan speed (rpm)
-        Column.W31: 'W31',  # HPT coolant bleed (lbm/s)
-        Column.W32: 'W32',  # LPT coolant bleed (lbm/s)
-        }
+    Column.UnitNumber: 'Unit Number',
+    Column.TimeCycles: 'Time (Cycles)',
+    Column.Altitude: 'Altitude',
+    Column.MachNumber: 'Mach Number',
+    Column.TRA: 'TRA',
+    Column.T2: 'T2',  # Total temperature at fan inlet (°R)
+    Column.T24: 'T24',  # Total temperature at LPC outlet (°R)
+    Column.T30: 'T30',  # Total temperature at HPC outlet (°R)
+    Column.T50: 'T50',  # Total temperature at LPT outlet (°R)
+    Column.P2: 'P2',  # Pressure at fan inlet (psia)
+    Column.P15: 'P15',  # Total pressure in bypass-duct (psia)
+    Column.P30: 'P30',  # Total pressure at HPC outlet (psia)
+    Column.Nf: 'Nf',  # Physical fan speed (rpm)
+    Column.Nc: 'Nc',  # Physical core speed (rpm)
+    Column.epr: 'epr',  # Engine pressure ratio (P50/P2) (--)
+    Column.Ps30: 'Ps30',  # Static pressure at HPC outlet (psia)
+    Column.phi: 'phi',  # Ratio of fuel flow to Ps30 (pps/psi)
+    Column.NRf: 'NRf',  # Corrected fan speed (rpm)
+    Column.NRc: 'NRc',  # Corrected core speed (rpm)
+    Column.BPR: 'BPR',  # Bypass Ratio (--)
+    Column.farB: 'farB',  # Burner fuel-air ratio (--)
+    Column.htBleed: 'htBleed',  # Bleed Enthalpy (--)
+    Column.Nf_dmd: 'Nf_dmd',  # Demanded fan speed (rpm)
+    Column.PCNfR_dmd: 'PCNfR_dmd',  # Demanded corrected fan speed (rpm)
+    Column.W31: 'W31',  # HPT coolant bleed (lbm/s)
+    Column.W32: 'W32',  # LPT coolant bleed (lbm/s)
+    }
 
 # Feature Engineered Columns:
+RATIO_T24_T2 = "T24_vs_T2"
+RATIO_T30_T24 = "T30_vs_T24"
+RATIO_T50_T30 = "T50_vs_T30"
+RATIO_T50_T2 = "T50_vs_T2"
+RATIO_W32_W31 = "W32_vs_W31"
+
 RUL_COLUMN = "RUL"
 RUL_CLIPPED_COLUMN = "RUL_CLIPPED"
 CONDITIONS_COLUMN = "Operational Condition"
@@ -104,13 +110,21 @@ NUM_OPERATIONAL_CONDITIONS = 6
 OPERATIONAL_PARAMS = [COLUMN_NAMES[Column.Altitude], COLUMN_NAMES[Column.MachNumber], COLUMN_NAMES[Column.TRA]]
 
 # Parameter Tuning:
-WINDOW_SIZE = 10
-MIN_SAMPLES_LEAF = 4
-TRAINING_FILE_COUNT = 1
+WINDOW_SIZE = 30
+TRAINING_FILE_COUNT = 4
 RANDOM_STATE = 42
 SILHOUETTE_SCORE_SAMPLE_SIZE = 5000
 SENSOR_VARIANCE_LIMIT = 100
-RUL_LIMIT = 130
+RUL_LIMIT = 150
+SAMPLE_UNITS = 25
+
+TEST_SIZE = 0.3
+
+EMA_SPAN = 10 # EMA span for filtering out white noise without flattening critical curves near EOL.
+MIN_SAMPLES_LEAF = 1
+MIN_SAMPLES_SPLIT = 2
+NUM_TREES = 50
+MAX_DEPTH = None
 
 def printHeading(heading):
     c = "#"
@@ -184,6 +198,7 @@ def PrepareData(df_train, debug=False):
 
 def FeatureEngineering(df_train, debug=False):
     printHeading("Feature Engineering")
+
     def CalculateRUL(df_train, debug=False):
         print("Calculating the RUL for each Unit...")
         fail_times = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[COLUMN_NAMES[Column.TimeCycles]].transform('max')
@@ -208,7 +223,7 @@ def FeatureEngineering(df_train, debug=False):
 
     def ClusterOperationalConditions(df_train, debug=False):
         print("\nClustering the operational conditions...")
-        df_operational_params = df_train[OPERATIONAL_PARAMS]
+        df_operational_params = df_train[OPERATIONAL_PARAMS].copy()
 
         print("\tScaling condition data before KMeans fit")
         operational_params_scaler = StandardScaler()
@@ -250,11 +265,8 @@ def FeatureEngineering(df_train, debug=False):
         plt.savefig(f"{OUTPUT_DIR}/Operational_Condition_Clusters.png", bbox_inches='tight', dpi=300)
         plt.close()
 
-        print("\tDropping operational parameter columns, we are satisfied with the clustering...")
-        df_train = df_train.drop(columns=OPERATIONAL_PARAMS)
-
         print("\tPlotting operational condition over cycles for a few sample engines...")
-        sample_units = random.sample(list(df_train[COLUMN_NAMES[Column.UnitNumber]].unique()), 10)
+        sample_units = random.sample(list(df_train[COLUMN_NAMES[Column.UnitNumber]].unique()), SAMPLE_UNITS)
         plt.figure(figsize=(12, 8))
         for unit in sample_units:
             unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
@@ -277,51 +289,6 @@ def FeatureEngineering(df_train, debug=False):
 
         return df_train, sample_units
 
-    def AddConditionCycleFeatures(df_train, sample_units, debug=False):
-        print("\nAdding cumulative cycles per operational condition...")
-        
-        # 2. Cumulative cycles for EACH of the 6 conditions
-        for cond in range(NUM_OPERATIONAL_CONDITIONS):
-            # Create indicator (1 if in this condition, 0 otherwise)
-            df_train[TOTAL_COND_CYCLE_COLS[cond]] = (df_train[CONDITIONS_COLUMN] == cond).astype(int)
-            # Cumulative sum per engine
-            df_train[TOTAL_COND_CYCLE_COLS[cond]] = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[TOTAL_COND_CYCLE_COLS[cond]].cumsum()
-        
-        if debug:
-            cols_to_show = [COLUMN_NAMES[Column.UnitNumber], CONDITIONS_COLUMN, 
-                           'Cumul_Cycles_Current_Cond'] + \
-                          [f'Cumul_Cycles_Cond_{i}' for i in range(NUM_OPERATIONAL_CONDITIONS)]
-            print(df_train[cols_to_show].head(15))
-        
-        print("\tPlotting cumulative cycles per condition for sample engines...")
-        
-        for unit in sample_units:
-            unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
-            
-            plt.figure(figsize=(12, 6))
-            
-            # Plot cumulative cycles for each condition
-            for col in TOTAL_COND_CYCLE_COLS:
-                plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], 
-                        unit_data[col], 
-                        label=col)
-            
-            # Also plot total cycles for reference
-            # plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], 
-            #         unit_data[COLUMN_NAMES[Column.TimeCycles]], 
-            #         label='Total Cycles', linestyle='--', color='black', alpha=0.7)
-            
-            plt.xlabel('Cycle')
-            plt.ylabel('Cumulative Cycles')
-            plt.title(f'Cumulative Cycles per Condition - Unit {unit}')
-            plt.legend()
-            plt.grid(True, alpha=0.3)
-            plt.savefig(f"{OUTPUT_DIR}/Cumulative_Condition_Cycles_Sample_Unit.png", 
-                       bbox_inches='tight', dpi=300)
-            plt.close()
-        
-        return df_train
-
     def ClipRUL(df_train, debug=False):
         rul_limit = RUL_LIMIT
         print(f"\nClipping RUL at a maximum of {rul_limit} cycles...")
@@ -341,6 +308,51 @@ def FeatureEngineering(df_train, debug=False):
 
         return df_train
 
+    def AddConditionCycleFeatures(df_train, sample_units, debug=False):
+        print("\nAdding cumulative cycles per operational condition...")
+        
+        # 2. Cumulative cycles for EACH of the 6 conditions
+        for cond in range(NUM_OPERATIONAL_CONDITIONS):
+            # Create indicator (1 if in this condition, 0 otherwise)
+            df_train[TOTAL_COND_CYCLE_COLS[cond]] = (df_train[CONDITIONS_COLUMN] == cond).astype(int)
+            # Cumulative sum per engine
+            df_train[TOTAL_COND_CYCLE_COLS[cond]] = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[TOTAL_COND_CYCLE_COLS[cond]].cumsum()
+        
+        if debug:
+            cols_to_show = [COLUMN_NAMES[Column.UnitNumber], CONDITIONS_COLUMN, 
+                           'Cumul_Cycles_Current_Cond'] + \
+                          [f'Cumul_Cycles_Cond_{i}' for i in range(NUM_OPERATIONAL_CONDITIONS)]
+            print(df_train[cols_to_show].head(15))
+        
+        print("\tPlotting cumulative cycles per condition for sample engines...")
+        
+        unit = sample_units[0]
+        unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
+        
+        plt.figure(figsize=(12, 6))
+        
+        # Plot cumulative cycles for each condition
+        for col in TOTAL_COND_CYCLE_COLS:
+            plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], 
+                    unit_data[col], 
+                    label=col)
+        
+        # Also plot total cycles for reference
+        # plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], 
+        #         unit_data[COLUMN_NAMES[Column.TimeCycles]], 
+        #         label='Total Cycles', linestyle='--', color='black', alpha=0.7)
+        
+        plt.xlabel('Cycle')
+        plt.ylabel('Cumulative Cycles')
+        plt.title(f'Cumulative Cycles per Condition - Unit {unit}')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.savefig(f"{OUTPUT_DIR}/Cumulative_Condition_Cycles_Sample_Unit.png", 
+                   bbox_inches='tight', dpi=300)
+        plt.close()
+        
+        return df_train
+
     def DropLowVarianceSensors(df_train, sample_units, debug=False):
         print("\nDropping low variance sensors...")
 
@@ -348,37 +360,116 @@ def FeatureEngineering(df_train, debug=False):
 
         # Plot sensor data for a few units:
         print("\tPlotting sensor variance...")
-        for s in sensor_columns:
-            plt.figure(figsize=(12, 6))
+        # for s in sensor_columns:
+        #     plt.figure(figsize=(12, 6))
+        #     for unit in sample_units:
+        #         unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
+        #         plt.plot(unit_data[RUL_COLUMN], 
+        #                 unit_data[s],
+        #                 label=f"Unit {unit}")
+                
+        #     plt.xlabel('Cycle')
+        #     plt.ylabel(f'Sensor {s}')
+        #     plt.title(f'Sensor {s} vs. RUL')
+        #     plt.legend()
+        #     plt.grid(True, alpha=0.3)
+        #     plt.savefig(f"{OUTPUT_DIR}/Sensor_{s}_vs_Time_1.png", 
+        #                bbox_inches='tight', dpi=300)
+        #     plt.close()
+
+        # From the sensor data plots above we can see that the data is very noisy. We will filter the data using 
+        # Exponential Moving Average (EMA)
+        # * EMA calculates the average sequentially using current and past cycles. Future values are unknown as in real workd prediction.
+        # * Places higher weight on the most recent cycles. This helps capture the accelerating degradation curve (exponential wear) typical of turbofan engines as they approach failure.
+        print("\tSmoothing sensor data to remove noise...")
+        for c in sensor_columns:
+            ema_smooth = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.ewm(span=EMA_SPAN, adjust=False).mean())
+            ema_smooth.name = f"{c}_EMA_SMOOTH"
+            df_train = pd.concat([df_train, ema_smooth], axis=1)
+
+            plt.figure(figsize=(20, 20))
+            plt.subplot(2, 1, 1)
             for unit in sample_units:
                 unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
-                plt.plot(unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][RUL_CLIPPED_COLUMN], 
-                        unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][s].cummax(), 
+                plt.plot(unit_data[RUL_COLUMN], 
+                        unit_data[f"{c}"], 
                         label=f"Unit {unit}")
-                
-            plt.xlabel('Cycle')
-            plt.ylabel(f'Sensor {s}')
-            plt.title(f'Sensor {s} vs. RUL')
+                plt.title(f"{c} Raw Data")
+
+            plt.subplot(2, 1, 2)
+            for unit in sample_units:
+                unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
+                plt.plot(unit_data[RUL_COLUMN], 
+                        unit_data[f"{c}_EMA_SMOOTH"], 
+                        label=f"Unit {unit}")
+                plt.title(f"{c} Smoothed Data")
+                    
+            plt.suptitle(f'Sensor {c} vs. RUL')
             plt.legend()
             plt.grid(True, alpha=0.3)
-            plt.savefig(f"{OUTPUT_DIR}/Sensor_{s}_vs_Time.png", 
+            plt.savefig(f"{OUTPUT_DIR}/Sensor_{c}_vs_RUL.png", 
                        bbox_inches='tight', dpi=300)
             plt.close()
 
-        # From the graphs above it looks like we can drop the following sensors as they remain relatively constant over time
-        low_var_sensors = [ 
-                           COLUMN_NAMES[Column.epr],
-                           COLUMN_NAMES[Column.farB],
-                           COLUMN_NAMES[Column.Nf_dmd],
-                           COLUMN_NAMES[Column.Nf],
-                           COLUMN_NAMES[Column.P2],
-                           COLUMN_NAMES[Column.P15],
-                           COLUMN_NAMES[Column.PCNfR_dmd],
-                           COLUMN_NAMES[Column.T2],
-                           ]
+        # From the graphs above it looks like we can drop the following sensors as they don't seem to change much during degradation:
+        # low_var_sensors = [ 
+        #                    COLUMN_NAMES[Column.farB],
+        #                    COLUMN_NAMES[Column.Nf_dmd],
+        #                    COLUMN_NAMES[Column.Nf],
+        #                    COLUMN_NAMES[Column.NRf],
+        #                    COLUMN_NAMES[Column.P2],
+        #                    COLUMN_NAMES[Column.P15],
+        #                    COLUMN_NAMES[Column.P30],
+        #                    COLUMN_NAMES[Column.PCNfR_dmd],
+        #                    COLUMN_NAMES[Column.phi],
+        #                    COLUMN_NAMES[Column.T2],
+        #                    COLUMN_NAMES[Column.W31],
+        #                    COLUMN_NAMES[Column.W32],
+        #                    ]
 
-        df_train = df_train.drop(columns=low_var_sensors)
-        sensor_columns = list(set(sensor_columns) - set(low_var_sensors))
+        # Exclude all raw sensor data as features, they are just too noisy.
+        #feature_columns = list(set(sensor_columns) - set(low_var_sensors))
+        feature_columns = []
+
+        if debug:
+            print(df_train)
+            print(df_train.describe())
+
+        return df_train, sensor_columns, feature_columns
+
+    def AddRatioFeatures(df_train, sensor_columns, sample_units, debug=False):
+        print("\nAdding some ratio sensors...")
+
+        df_train[RATIO_T24_T2] = df_train[COLUMN_NAMES[Column.T24]] / df_train[COLUMN_NAMES[Column.T2]]
+        df_train[RATIO_T30_T24] = df_train[COLUMN_NAMES[Column.T30]] / df_train[COLUMN_NAMES[Column.T24]]
+        df_train[RATIO_T50_T30] = df_train[COLUMN_NAMES[Column.T50]] / df_train[COLUMN_NAMES[Column.T30]]
+        df_train[RATIO_T50_T2] = df_train[COLUMN_NAMES[Column.T50]] / df_train[COLUMN_NAMES[Column.T2]]
+
+        df_train[RATIO_W32_W31] = df_train[COLUMN_NAMES[Column.W32]] / df_train[COLUMN_NAMES[Column.W31]]
+
+        ratio_columns = [RATIO_W32_W31, RATIO_T50_T2, RATIO_T50_T30, RATIO_T30_T24, RATIO_T24_T2]
+
+        # Plot sensor data for a few units:
+        print("\tPlotting ratio variance...")
+        for s in ratio_columns:
+            plt.figure(figsize=(12, 6))
+            for unit in sample_units:
+                unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
+                plt.plot(unit_data[RUL_CLIPPED_COLUMN], 
+                        unit_data[s],
+                        label=f"Unit {unit}")
+                
+            plt.xlabel('RUL')
+            plt.ylabel(f'{s}')
+            plt.title(f'{s} vs. RUL')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.savefig(f"{OUTPUT_DIR}/{s}_vs_Time_1.png", 
+                       bbox_inches='tight', dpi=300)
+            plt.close()
+
+        # Some of the ratio features look promising:
+        sensor_columns.extend([RATIO_T50_T30, RATIO_T50_T2, RATIO_T30_T24, RATIO_T24_T2])
 
         if debug:
             print(df_train)
@@ -386,7 +477,7 @@ def FeatureEngineering(df_train, debug=False):
 
         return df_train, sensor_columns
 
-    def CreateRollingFeatures(df_train, sensor_columns, sample_units, debug=False):
+    def CreateRollingFeatures(df_train, sensor_columns, feature_columns, sample_units, debug=False):
         print("\nCreating rolling features...")
         # Random Forest does not understand time or sequences by itself.
         # It looks at one row at a time and makes a prediction based only on the numbers in that row.
@@ -408,44 +499,80 @@ def FeatureEngineering(df_train, debug=False):
         # Without these, Random Forest will perform quite poorly. With them, it becomes much 
         # smarter at detecting when an engine is starting to fail.
 
-        rolling_features = []
-        # def add_rolling_features(group):
-        #     for c in sensor_columns:
-        #         group[f"{c}_ROLL_MEAN"] = group[c].expanding().mean()
-        #         rolling_features.append(f"{c}_ROLL_MEAN")
-        #         group[f"{c}_ROLL_STD"] = group[c].expanding().std()
-        #         rolling_features.append(f"{c}_ROLL_STD")
+        # Calculate slope:
+        def analytical_slope(y):
+            n = len(y)
+            x = np.arange(n)
 
-        #         group[f"{c}_ROLL_MIN"] = group[c].cummin()
-        #         rolling_features.append(f"{c}_ROLL_MIN")
-        #         group[f"{c}_ROLL_MAX"] = group[c].cummax()
-        #         rolling_features.append(f"{c}_ROLL_MAX")
-        #     return group
+            x_mean = (n - 1) / 2.0
+            y_mean = np.mean(y)
 
-        # df_train = df_train.groupby(COLUMN_NAMES[Column.UnitNumber]).apply(add_rolling_features).reset_index()
-        # df_train = df_train.drop(columns=['level_1'])
-        # df_train = df_train.bfill()
+            # Sum of products minus correction factor
+            covariance = np.sum(x * y) - n * x_mean * y_mean
+            variance = (n * (n**2 - 1)) / 12.0  # Analytical variance of arange(n)
 
+            if variance == 0:
+                return 0.0
+
+            return covariance / variance
+
+        print("\tCalculating rolling features for operational parameters...")
+        for c in OPERATIONAL_PARAMS:
+            roll_mean = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=WINDOW_SIZE, min_periods=1).mean())
+            roll_mean.name = f"{c}_ROLL_MEAN"
+            df_train = pd.concat([df_train, roll_mean], axis=1)
+
+
+        print("\tCalculating rolling features for sensors...")
         for c in sensor_columns:
-            df_train[f"{c}_ROLL_MIN"] = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].cummin()
-            df_train[f"{c}_ROLL_MAX"] = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].cummax()
+            cumu_min = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].cummin()
+            cumu_max = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].cummax()
+            roll_min = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=WINDOW_SIZE, min_periods=1).min())
+            roll_max = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=WINDOW_SIZE, min_periods=1).max())
+            roll_mean = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=WINDOW_SIZE, min_periods=1).mean())
+            roll_std = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=WINDOW_SIZE, min_periods=1).std())
+            roll_var = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=WINDOW_SIZE, min_periods=1).var())
 
-            rolling_features.append(f"{c}_ROLL_MIN")
-            rolling_features.append(f"{c}_ROLL_MAX")
+            cumu_min.name = f"{c}_CUMU_MIN"
+            cumu_max.name = f"{c}_CUMU_MAX"
+            roll_min.name = f"{c}_ROLL_MIN"
+            roll_max.name = f"{c}_ROLL_MAX"
+            roll_mean.name = f"{c}_ROLL_MEAN"
+            roll_std.name = f"{c}_ROLL_STD"
+            roll_var.name = f"{c}_ROLL_VAR"
 
+            df_train = pd.concat([df_train, cumu_min], axis=1)
+            df_train = pd.concat([df_train, cumu_max], axis=1)
+            df_train = pd.concat([df_train, roll_min], axis=1)
+            df_train = pd.concat([df_train, roll_max], axis=1)
+            df_train = pd.concat([df_train, roll_mean], axis=1)
+            df_train = pd.concat([df_train, roll_std], axis=1)
+            df_train = pd.concat([df_train, roll_var], axis=1)
+
+
+        print("\tCalculating rolling slopes for some rolling features...")
+        for c in sensor_columns:
+            roll_mean_slope = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[f"{c}_ROLL_MEAN"].transform(lambda x: x.rolling(window=10, min_periods=1).apply(analytical_slope, raw=True))
+            roll_max_slope = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[f"{c}_ROLL_MAX"].transform(lambda x: x.rolling(window=10, min_periods=1).apply(analytical_slope, raw=True))
+            roll_mean_slope.name = f"{c}_ROLL_MEAN_SLOPE"
+            roll_max_slope.name = f"{c}_ROLL_MAX_SLOPE"
+            df_train = pd.concat([df_train, roll_mean_slope], axis=1)
+            df_train = pd.concat([df_train, roll_max_slope], axis=1)
 
         # Plot rolling sensor data for a few units:
-        print("\tPlotting rolling features...")
+        print("\tPlotting rolling sensor features...")
         for i in range(len(sensor_columns)):
             s = sensor_columns[i]
-            plt.figure(figsize=(12, 6))
-            rolling_postfixes = ["_ROLL_MIN", "_ROLL_MAX"]
+            plt.figure(figsize=(20, 20))
+            rolling_postfixes = ["", "_CUMU_MIN", "_CUMU_MAX", "_ROLL_MIN", "_ROLL_MAX", "_ROLL_MEAN", "_ROLL_STD", "_ROLL_VAR", "_ROLL_MEAN_SLOPE", "_ROLL_MAX_SLOPE"]
             for j in range(len(rolling_postfixes)):
-                plt.subplot(2, 2, j+1)
+                plt.subplot(6, 2, j+1)
                 for unit in sample_units:
                     unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
-                    plt.plot(unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][RUL_CLIPPED_COLUMN], 
-                            unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][f"{s}{rolling_postfixes[j]}"], 
+                    #plt.plot(unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][RUL_CLIPPED_COLUMN], 
+                            #unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][f"{s}{rolling_postfixes[j]}"], 
+                    plt.plot(unit_data[RUL_COLUMN], 
+                            unit_data[f"{s}{rolling_postfixes[j]}"], 
                             label=f"Unit {unit}")
                     plt.title(f"{s}{rolling_postfixes[j]}")
                     
@@ -456,82 +583,94 @@ def FeatureEngineering(df_train, debug=False):
                        bbox_inches='tight', dpi=300)
             plt.close()
 
-        return df_train, rolling_features
+        print("\tPlotting rolling parameter features...")
+        for i in range(len(OPERATIONAL_PARAMS)):
+            s = OPERATIONAL_PARAMS[i]
+            plt.figure(figsize=(20, 12))
+            rolling_postfixes = ["", "_ROLL_MEAN"]
+            for j in range(len(rolling_postfixes)):
+                plt.subplot(2, 1, j+1)
+                for unit in sample_units:
+                    unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
+                    #plt.plot(unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][RUL_CLIPPED_COLUMN], 
+                            #unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][f"{s}{rolling_postfixes[j]}"], 
+                    plt.plot(unit_data[RUL_COLUMN], 
+                            unit_data[f"{s}{rolling_postfixes[j]}"], 
+                            label=f"Unit {unit}")
+                    plt.title(f"{s}{rolling_postfixes[j]}")
+                    
+            plt.suptitle(f'Rolling Param {s} vs. RUL')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.savefig(f"{OUTPUT_DIR}/Rolling_Parameter_{s}_vs_Time.png", 
+                       bbox_inches='tight', dpi=300)
+            plt.close()
 
-    def DropLowCorrelationSensors(df_train, sample_units, sensor_columns, rolling_features, debug=False):
-        print("\nDropping low correlation sensors...")
+        # The following rolling features look promising:
+        feature_columns = [
+                "farB_ROLL_STD",
+                "farB_ROLL_MEAN",
+                "farB_ROLL_VAR",
 
-        roll_min_cols = [c for c in rolling_features if c.endswith("_ROLL_MIN")]
-        roll_max_cols = [c for c in rolling_features if c.endswith("_ROLL_MAX")]
-        for i in range(len(sample_units)):
-            unit = sample_units[i]
-            unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit]
+                "NRc_CUMU_MAX",
+                "NRc_ROLL_MAX",
+                "NRc_ROLL_MEAN",
+                "NRc_ROLL_MAX_SLOPE",
 
-            def PlotCorrelation(name, columns, debug=False):
-                print(f"\tPlotting correlation between RUL and {name} for unit {unit}...")
-                if debug:
-                    print(columns)
-                sns.heatmap(abs(unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][columns + [RUL_COLUMN]].corr()))
-                plt.title(f"RUL vs. {name} Correlation (Unit {unit})")
-                plt.savefig(f"{OUTPUT_DIR}/RUL_{name.replace(" ", "_")}_Correlation_{i+1}.png", 
-                           bbox_inches='tight', dpi=300)
-                plt.close()
+                "NRf_CUMU_MAX",
+                "NRf_ROLL_MAX",
 
-            PlotCorrelation("High Variance Sensor Columns", sensor_columns)
+                "Ps30_CUMU_MAX",
+                #"Ps30_ROLL_MAX",  <-- Overdominant
+                "Ps30_ROLL_MEAN",
+                "Ps30_ROLL_MEAN_SLOPE",
 
-            PlotCorrelation("Rolling Minimum Columns", roll_min_cols)
-            PlotCorrelation("Rolling Maximum Columns", roll_max_cols)
-            # All of these seem to correlate well with RUL, keeping them.
+                "T50_vs_T2_CUMU_MAX",
+                "T50_vs_T2_ROLL_MAX",
+                "T50_vs_T2_ROLL_MEAN",
 
-        # The following columns often correlates weakly with RUL, removing them:
-        sensor_columns.remove(COLUMN_NAMES[Column.Nc])
-        sensor_columns.remove(COLUMN_NAMES[Column.NRf])
-        sensor_columns.remove(COLUMN_NAMES[Column.NRc])
-        sensor_columns.extend(roll_min_cols)
-        sensor_columns.extend(roll_max_cols)
+                "T50_vs_T30_CUMU_MAX",
+                "T50_vs_T30_ROLL_MAX",
+                "T50_vs_T30_ROLL_MEAN",
 
-        # The minimum and maximum columns correlate well, we will add them to the features list:
-        sensor_columns.extend(roll_min_cols)
-        return df_train, sensor_columns
+                "T50_CUMU_MAX",
+                "T50_ROLL_MAX",
+                "T50_ROLL_MEAN",
+                ]
+                
+
+        return df_train, feature_columns
 
 
     df_train = CalculateRUL(df_train)
     df_train = ClipRUL(df_train)
     df_train, sample_units = ClusterOperationalConditions(df_train)
     df_train = AddConditionCycleFeatures(df_train, sample_units)
-    df_train, sensor_columns = DropLowVarianceSensors(df_train, sample_units)
-    df_train, rolling_features = CreateRollingFeatures(df_train, sensor_columns, sample_units)
-    df_train, feature_columns = DropLowCorrelationSensors(df_train, sample_units, sensor_columns, rolling_features)
-    return df_train, feature_columns
+    df_train, sensor_columns, feature_columns = DropLowVarianceSensors(df_train, sample_units)
+    df_train, sensor_columns = AddRatioFeatures(df_train, sensor_columns, sample_units)
+    df_train, feature_columns = CreateRollingFeatures(df_train, sensor_columns, feature_columns, sample_units)
+
+    print(feature_columns)
+    return df_train, feature_columns, sample_units
 
 def TrainTestSplit(df_train, debug=False):
     printHeading("Train/Test Split")
     unique_units = df_train[COLUMN_NAMES[Column.UnitNumber]].unique()
-    train_units, test_units = train_test_split(unique_units, test_size=0.20, random_state=RANDOM_STATE)
+    train_units, test_units = train_test_split(unique_units, test_size=0.40, random_state=RANDOM_STATE)
     df_train_split = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]].isin(train_units)].copy()
     df_test_split = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]].isin(test_units)].copy()
     print(f"Train engines: {len(train_units)}, Test engines: {len(test_units)}")
     return df_train_split, df_test_split
 
-def RandomForestModel(df_train_split, df_test_split, debug=False):
-    # Training the Random Forest Model:
+def RandomForestModel(df_train_split, df_test_split, feature_columns, debug=False):
+    printHeading("Random Forest Model")
+
     ## Extract X and Y data:
     target_col = RUL_CLIPPED_COLUMN
-    exclude_cols = [
-            COLUMN_NAMES[Column.UnitNumber], 
-            COLUMN_NAMES[Column.TimeCycles], 
-            target_col, 
-            RUL_COLUMN
-            ]
-    #exclude_cols.extend(sensor_columns) # We only want the new features we added.
-    feature_cols = [col for col in df_train_split.columns 
-                    if col not in exclude_cols
-                    and ('ROLL' in col or 'DELTA' in col or 'CONDITION' in col)]
-    strong_raw = ['NRf', 'Ps30', 'Nc', 'T50', 'phi']
-    feature_cols.extend(strong_raw)
-
-    if debug:
-        print(f"Number of features: {len(feature_cols)}")
+    feature_cols = feature_columns + [CONDITIONS_COLUMN] + TOTAL_COND_CYCLE_COLS
+    
+    print(f"Target column: {RUL_CLIPPED_COLUMN}")
+    print(f"Feature columns: {feature_cols}")
 
     X_train = df_train_split[feature_cols]
     y_train = df_train_split[target_col]
@@ -539,79 +678,75 @@ def RandomForestModel(df_train_split, df_test_split, debug=False):
     X_test = df_test_split[feature_cols]
     y_test = df_test_split[target_col]
 
-    ## Train the model:
-    # Train
+    print(f"Training the random forest model...")
     model = RandomForestRegressor(
-            n_estimators=400,     # number of trees
+            n_estimators=NUM_TREES,
             min_samples_leaf=MIN_SAMPLES_LEAF,
-            max_depth=None,       # limit depth to prevent overfitting
-            n_jobs=-1,            # use all CPU cores
+            min_samples_split=MIN_SAMPLES_SPLIT,
+            max_depth=MAX_DEPTH,
+            n_jobs=-1,
             )
 
     model.fit(X_train, y_train)
-    if debug:
-        print("✅ Model trained!")
 
-        feature_importances = pd.Series(model.feature_importances_, index=feature_cols)
-        print(feature_importances.sort_values(ascending=False).head(20))
+    feature_importances = pd.Series(model.feature_importances_, index=feature_cols)
+    print("Feature imporances:")
+    print(feature_importances.sort_values(ascending=False).head(20))
 
     return model, feature_cols, X_test, y_test, X_train, y_train
 
-def EvaluateModel(df_test_split, model, feature_cols, X_test, y_test, debug=True):
-    ## Evaluate the model:
-    y_pred = model.predict(X_test)
+def EvaluateModel(df, model, X, y, feature_cols, identifier, debug=True):
+    printHeading("Evaluating Random Forest Model")
+    y_pred = model.predict(X)
 
     ## Metrics
-    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-    print(f"RMSE: {rmse:.2f}")
+    rmse = np.sqrt(mean_squared_error(y, y_pred))
+    print(f"RMSE ({identifier}): {rmse:.2f}")
 
     # NASA's score (common for RUL)
     def rul_score(y_test, y_pred):
         diff = y_pred - y_test
         score = np.sum(np.where(diff < 0, np.exp(-diff/13) - 1, np.exp(diff/10) - 1))
         return score
-    print(f"NASA Score: {rul_score(y_test, y_pred):.2f}")
+    print(f"NASA Score ({identifier}): {rul_score(y, y_pred):.2f}")
 
-    def plot_ytest_vs_ypred():
-        # Scatter plot
-        plt.figure(figsize=(10, 6))
-        plt.scatter(y_test, y_pred, alpha=0.5, s=10)
-        plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2)  # Perfect prediction line
+    # Scatter plot
+    plt.figure(figsize=(10, 6))
+    plt.scatter(y, y_pred, alpha=0.5, s=10)
+    plt.plot([y.min(), y.max()], [y.min(), y.max()], 'r--', lw=2)  # Perfect prediction line
 
-        plt.xlabel('Actual RUL (Clipped)')
-        plt.ylabel('Predicted RUL')
-        plt.title('Actual vs Predicted RUL')
-        plt.grid(True)
-        plt.show()
-    plot_ytest_vs_ypred()
+    plt.xlabel('Actual RUL (Clipped)')
+    plt.ylabel('Predicted RUL')
+    plt.title(f'Actual vs Predicted RUL ({identifier})')
+    plt.grid(True)
+    plt.savefig(f"{OUTPUT_DIR}/Predicted_vs_Actual_RUL_{identifier.replace(" ", "_")}.png", 
+               bbox_inches='tight', dpi=300)
+    plt.close()
 
-    def plot_predictions_random_engines(df_test_split):
-        sample_units = random.sample(list(df_test_split[COLUMN_NAMES[Column.UnitNumber]].unique()), 5)
+    plt.figure(figsize=(12, 8))
+    sample_units = random.sample(list(df[COLUMN_NAMES[Column.UnitNumber]].unique()), 5)
+    for unit in sample_units:
+        unit_data = df[df[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
 
-        plt.figure(figsize=(12, 8))
+        actual = unit_data[RUL_CLIPPED_COLUMN]
+        pred = model.predict(unit_data[feature_cols])
 
-        for unit in sample_units:
-            unit_data = df_test_split[df_test_split[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
+        plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], actual, label=f'Unit {unit} - Actual', linestyle='-', marker='o')
+        plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], pred, label=f'Unit {unit} - Predicted', linestyle='--')
 
-            actual = unit_data[RUL_CLIPPED_COLUMN]
-            pred = model.predict(unit_data[feature_cols])
-
-            plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], actual, label=f'Unit {unit} - Actual', linestyle='-', marker='o')
-            plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], pred, label=f'Unit {unit} - Predicted', linestyle='--')
-
-        plt.xlabel('Cycle')
-        plt.ylabel('RUL')
-        plt.title('RUL Prediction over Cycles for Sample Engines')
-        plt.legend()
-        plt.grid(True)
-        plt.show()
-    plot_predictions_random_engines(df_test_split)
+    plt.xlabel('Cycle')
+    plt.ylabel('RUL')
+    plt.title('RUL Prediction over Cycles for Sample Engines')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f"{OUTPUT_DIR}/Sample_Engine_Predictions_{identifier.replace(" ", "_")}.png", 
+               bbox_inches='tight', dpi=300)
+    plt.close()
 
 df_train = LoadData()
 df_train = PrepareData(df_train)
-df_train, sensor_columns = FeatureEngineering(df_train)
+df_train, feature_columns, sample_units = FeatureEngineering(df_train)
 df_train_split, df_test_split = TrainTestSplit(df_train)
-#model, feature_cols, X_test, y_test, X_train, y_train = RandomForestModel(df_train_split, df_test_split)
-
-#EvaluateModel(df_train_split, model, feature_cols, X_train, y_train)
-#EvaluateModel(df_test_split, model, feature_cols, X_test, y_test)
+model, feature_cols, X_test, y_test, X_train, y_train = RandomForestModel(df_train_split, df_test_split, feature_columns)
+EvaluateModel(df_train_split, model, X_train, y_train, feature_cols, "Training Split")
+EvaluateModel(df_test_split, model, X_test, y_test, feature_cols, "Testing Split")
