@@ -20,7 +20,13 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
 
-OUTPUT_DIR = Path("output")
+TRAINING_FILE = "../Data/train_FD001.txt"
+#TRAINING_FILE = "../Data/train_FD002.txt"
+#TRAINING_FILE = "../Data/train_FD003.txt"
+#TRAINING_FILE = "../Data/train_FD004.txt"
+
+OUTPUT_DIR = Path(f"output/{TRAINING_FILE.split('/')[-1].split('.')[0]}")
+print(OUTPUT_DIR)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Enum with column indexes
@@ -112,23 +118,22 @@ NUM_OPERATIONAL_CONDITIONS = 6
 OPERATIONAL_PARAMS = [COLUMN_NAMES[Column.Altitude], COLUMN_NAMES[Column.MachNumber], COLUMN_NAMES[Column.TRA]]
 
 # Parameter Tuning:
-WINDOW_SIZE = 30
-TRAINING_FILE_COUNT = 4
+SILHOUETTE_SCORE_SAMPLE_SIZE = 5000 # Silhouette score sample size for operational condition clustering.
 RANDOM_STATE = 42
-SILHOUETTE_SCORE_SAMPLE_SIZE = 5000
-SENSOR_VARIANCE_LIMIT = 100
+MEAN_WINDOW = 30 # 
+STD_WINDOW = 5 # 
+EMA_SPAN = 15 # EMA span for filtering out white noise without flattening critical curves near EOL.
 RUL_LIMIT = 150
 SAMPLE_UNITS = 25
 
 TEST_SIZE = 0.3 # Train/test split size
 
-EMA_SPAN = 15 # EMA span for filtering out white noise without flattening critical curves near EOL.
-
-NUM_TREES = 150 # More trees reduce variance
-MAX_DEPTH = 12  # Cap depth to prevent memorizing exact rows
-MIN_SAMPLES_LEAF = 5 # Let every leaf represent a general trend instead of a single sample
+NUM_TREES = 100 # More trees reduce variance
+MAX_DEPTH = 10  # Cap depth to prevent memorizing exact rows
+MIN_SAMPLES_LEAF = 10 # Let every leaf represent a general trend instead of a single sample
 MAX_FEATURES = 'sqrt' # Force tree diversity
-#MIN_SAMPLES_SPLIT = 2
+
+NASA_SAFETY_BUFFER = 0 # Force model to predict a bit earlier
 
 def printHeading(heading):
     c = "#"
@@ -139,30 +144,13 @@ def printHeading(heading):
 
 def LoadData(debug=False):
     printHeading("Data Gathering")
-    df_train_files = []
     head_count = 5
-    for i in range(TRAINING_FILE_COUNT):
-        print(f"Loading training file {i+1}...")
-        df_train_files.append(pd.read_csv(f"../Data/train_FD00{i+1}.txt", sep=' ', header=None))
-        if debug: 
-            print(df_train_files[i].head(head_count))
-            print(df_train_files[i].describe())
-
-    print("Uniquifying unit numbers...")
-    # Unit numbers are duplicated between the training files. 
-    # If we can uniquify them, we can merge the data sets into one.
-    for i in range(TRAINING_FILE_COUNT):
-        if (i > 0):
-            df_train_files[i][Column.UnitNumber.value] += \
-                    df_train_files[i-1][Column.UnitNumber.value].max()
-
-    print("Merging data sets...")
-    # The data can now be merged into a single data set as we have unique 
-    # Unit Numbers.
-    df_train = pd.concat(df_train_files)
-    if debug:
-        print(df_train)
+    print(f"Loading training file {TRAINING_FILE}...")
+    df_train = pd.read_csv(TRAINING_FILE, sep=' ', header=None)
+    if debug: 
+        print(df_train.head(head_count))
         print(df_train.describe())
+
     return df_train
 
 def PrepareData(df_train, debug=False):
@@ -495,36 +483,25 @@ def FeatureEngineering(df_train, debug=False):
 
         print("\tCalculating rolling features...")
         for c in feature_columns:
-            roll_min = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=WINDOW_SIZE, min_periods=1).min())
-            roll_max = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=WINDOW_SIZE, min_periods=1).max())
-            roll_mean = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=WINDOW_SIZE, min_periods=1).mean())
-            roll_std = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=WINDOW_SIZE, min_periods=1).std())
-            roll_var = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=WINDOW_SIZE, min_periods=1).var())
+            roll_mean = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=MEAN_WINDOW, min_periods=1).mean())
+            roll_std = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.rolling(window=STD_WINDOW, min_periods=1).std())
 
-            roll_min.name = f"{c}_ROLL_MIN"
-            roll_max.name = f"{c}_ROLL_MAX"
             roll_mean.name = f"{c}_ROLL_MEAN"
             roll_std.name = f"{c}_ROLL_STD"
-            roll_var.name = f"{c}_ROLL_VAR"
 
-            df_train = pd.concat([df_train, roll_min], axis=1)
-            df_train = pd.concat([df_train, roll_max], axis=1)
             df_train = pd.concat([df_train, roll_mean], axis=1)
             df_train = pd.concat([df_train, roll_std], axis=1)
-            df_train = pd.concat([df_train, roll_var], axis=1)
 
 
         # Plot rolling sensor data for a few units:
         print("\tPlotting rolling features...")
         for s in feature_columns:
             plt.figure(figsize=(20, 20))
-            rolling_postfixes = ["", "_ROLL_MIN", "_ROLL_MAX", "_ROLL_MEAN", "_ROLL_STD", "_ROLL_VAR"]
+            rolling_postfixes = ["", "_ROLL_MEAN", "_ROLL_STD"]
             for j in range(len(rolling_postfixes)):
-                plt.subplot(3, 2, j+1)
+                plt.subplot(2, 2, j+1)
                 for unit in sample_units:
                     unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
-                    #plt.plot(unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][RUL_CLIPPED_COLUMN], 
-                            #unit_data[unit_data[RUL_CLIPPED_COLUMN] < RUL_LIMIT][f"{s}{rolling_postfixes[j]}"], 
                     plt.plot(unit_data[RUL_COLUMN], 
                             unit_data[f"{s}{rolling_postfixes[j]}"], 
                             label=f"Unit {unit}")
@@ -541,17 +518,39 @@ def FeatureEngineering(df_train, debug=False):
         # The following rolling features look promising:
         feature_columns.extend([
                 "farB_EMA_SMOOTH_ROLL_MEAN",
+                "farB_EMA_SMOOTH_ROLL_STD",
+
                 "htBleed_EMA_SMOOTH_ROLL_MEAN",
+                "htBleed_EMA_SMOOTH_ROLL_STD",
+
                 "Nc_EMA_SMOOTH_ROLL_MEAN",
+                "Nc_EMA_SMOOTH_ROLL_STD",
+
                 "NRc_EMA_SMOOTH_ROLL_MEAN",
+                "NRc_EMA_SMOOTH_ROLL_STD",
+
                 "Ps30_EMA_SMOOTH_ROLL_MEAN",
+                "Ps30_EMA_SMOOTH_ROLL_STD",
+
                 "T24_EMA_SMOOTH_ROLL_MEAN",
+                "T24_EMA_SMOOTH_ROLL_STD",
+
                 "T24_vs_T2_ROLL_MEAN",
+                "T24_vs_T2_ROLL_STD",
+                
                 "T30_EMA_SMOOTH_ROLL_MEAN",
+                "T30_EMA_SMOOTH_ROLL_STD",
+                
                 "T30_vs_T24_ROLL_MEAN",
-                "T50_EMA_SMOOTH_ROLL_MEAN",
+                "T30_vs_T24_ROLL_STD",
+
+                "T50_EMA_SMOOTH_ROLL_STD",
+
                 "T50_vs_T2_ROLL_MEAN",
+                "T50_vs_T2_ROLL_STD",
+
                 "T50_vs_T30_ROLL_MEAN",
+                "T50_vs_T30_ROLL_STD",
                 ])
                 
 
@@ -583,7 +582,7 @@ def RandomForestModel(df_train_split, df_test_split, feature_columns, debug=Fals
 
     ## Extract X and Y data:
     target_col = RUL_CLIPPED_COLUMN
-    feature_cols = feature_columns #+ [CONDITIONS_COLUMN] + TOTAL_COND_CYCLE_COLS
+    feature_cols = feature_columns + TOTAL_COND_CYCLE_COLS
     
     print(f"Target column: {RUL_CLIPPED_COLUMN}")
     print(f"Feature columns: {feature_cols}")
@@ -614,7 +613,7 @@ def RandomForestModel(df_train_split, df_test_split, feature_columns, debug=Fals
 
 def EvaluateModel(df, model, X, y, feature_cols, identifier, debug=True):
     printHeading("Evaluating Random Forest Model")
-    y_pred = model.predict(X)
+    y_pred = model.predict(X) - NASA_SAFETY_BUFFER
 
     ## Metrics
     rmse = np.sqrt(mean_squared_error(y, y_pred))
@@ -646,7 +645,7 @@ def EvaluateModel(df, model, X, y, feature_cols, identifier, debug=True):
         unit_data = df[df[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
 
         actual = unit_data[RUL_CLIPPED_COLUMN]
-        pred = model.predict(unit_data[feature_cols].values)
+        pred = model.predict(unit_data[feature_cols].values) - NASA_SAFETY_BUFFER
 
         plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], actual, label=f'Unit {unit} - Actual', linestyle='-', marker='o')
         plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], pred, label=f'Unit {unit} - Predicted', linestyle='--')
