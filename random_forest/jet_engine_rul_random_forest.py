@@ -1,22 +1,20 @@
 # Jet Engine RUL Using NASA CMAPSS Data
 # "Data URL: https://data.nasa.gov/dataset/cmapss-jet-engine-simulated-data"
 
+import math
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import random
-import seaborn as sns
 
 from enum import Enum
-from mpl_toolkits.mplot3d import Axes3D
 from pathlib import Path
-from pandas.core.window import rolling
 from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error, r2_score, silhouette_score
-from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, silhouette_score, make_scorer
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import StandardScaler
 
 
@@ -118,22 +116,20 @@ NUM_OPERATIONAL_CONDITIONS = 6
 OPERATIONAL_PARAMS = [COLUMN_NAMES[Column.Altitude], COLUMN_NAMES[Column.MachNumber], COLUMN_NAMES[Column.TRA]]
 SILHOUETTE_SCORE_SAMPLE_SIZE = 5000 # Silhouette score sample size for operational condition clustering.
 RANDOM_STATE = 42
-
-# Parameter Tuning:
-EMA_SPAN = 5 # EMA span for filtering out white noise without flattening critical curves near EOL.
-MEAN_WINDOW = 5 # 
-STD_WINDOW = 5 # 
-RUL_LIMIT = 150
 SAMPLE_UNITS = 25
-
 TEST_SIZE = 0.3 # Train/test split size
 
-NUM_TREES = 100 # More trees reduce variance
-MAX_DEPTH = 10  # Cap depth to prevent memorizing exact rows
-MIN_SAMPLES_LEAF = 10 # Let every leaf represent a general trend instead of a single sample
+# Parameter Tuning:
+EMA_SPAN = 20 # EMA span for filtering out white noise without flattening critical curves near EOL.
+MEAN_WINDOW = 50 # 
+STD_WINDOW = 55 # 
+NUM_TREES = 200 # More trees reduce variance
+MAX_DEPTH = 15  # Cap depth to prevent memorizing exact rows
+MIN_SAMPLES_LEAF = 2 # Let every leaf represent a general trend instead of a single sample
+MIN_SAMPLES_SPLIT = 15 # 
 MAX_FEATURES = 'sqrt' # Force tree diversity
-
-NASA_SAFETY_BUFFER = 0 # Force model to predict a bit earlier
+NASA_SAFETY_BUFFER = 5 # Force model to predict a bit earlier
+RUL_LIMIT = 100
 
 def printHeading(heading):
     c = "#"
@@ -152,6 +148,14 @@ def LoadData(debug=False):
         print(df_train.describe())
 
     return df_train
+
+def PlotHistogram(data, bins, title, xlabel, ylabel):
+    plt.hist(data, bins=bins)
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.savefig(f"{OUTPUT_DIR}/{title.replace(" ", "_")}.png", bbox_inches='tight', dpi=300)
+    plt.close()
 
 def PrepareData(df_train, debug=False):
     printHeading("Data Preparation")
@@ -198,12 +202,7 @@ def FeatureEngineering(df_train, debug=False):
 
         print("Plotting the RUL distribution for each Unit...")
         max_cycles_per_unit = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[RUL_COLUMN].max()
-        plt.hist(max_cycles_per_unit, bins=30)
-        plt.title('Distribution of Engine Lifespans')
-        plt.xlabel("Engine Lifespan")
-        plt.ylabel("Engine Count")
-        plt.savefig(f"{OUTPUT_DIR}/Engine_Lifespan_Distribution.png", bbox_inches='tight', dpi=300)
-        plt.close()
+        PlotHistogram(max_cycles_per_unit, 30, 'Distribution of Engine Lifespans', "Engine Lifespan", "Engine Count")
 
         if debug:
             print(max_cycles_per_unit.describe())
@@ -220,12 +219,7 @@ def FeatureEngineering(df_train, debug=False):
 
         print("Plotting the clipped RUL distribution for each Unit...")
         max_cycles_per_unit = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[RUL_CLIPPED_COLUMN].max()
-        plt.hist(max_cycles_per_unit, bins=5)
-        plt.title('Distribution of Clipped Engine Lifespans')
-        plt.xlabel("Engine Lifespan")
-        plt.ylabel("Engine Count")
-        plt.savefig(f"{OUTPUT_DIR}/Engine_Lifespan_Clipped_Distribution.png", bbox_inches='tight', dpi=300)
-        plt.close()
+        PlotHistogram(max_cycles_per_unit, 5, 'Distribution of Clipped Engine Lifespans', "Engine Lifespan", "Engine Count")
 
         if debug:
             print(df_train.describe())
@@ -551,12 +545,61 @@ def TrainTestSplit(df_train, debug=False):
     print(f"Train engines: {len(train_units)}, Test engines: {len(test_units)}")
     return df_train_split, df_test_split
 
+
+# NASA's score (common for RUL)
+def rul_score(y_test, y_pred):
+    diff = y_pred - y_test
+    score = np.sum(np.where(diff < 0, np.exp(-diff/13) - 1, np.exp(diff/10) - 1))
+    return score
+
+
+def HyperparameterTuning(df_train_split, feature_columns, debug=False):
+    print("Hyperparameter tuning using GridSearchCV...")
+
+    ## Extract X and Y data:
+    target_col = RUL_CLIPPED_COLUMN
+    feature_cols = feature_columns + TOTAL_COND_CYCLE_COLS
+    
+    print(f"Target column: {RUL_CLIPPED_COLUMN}")
+    print(f"Feature columns: {feature_cols}")
+
+    X_train = df_train_split[feature_cols].values
+    y_train = df_train_split[target_col].values
+
+    param_grid = {
+    'n_estimators': range(30, 70, 10),
+    'min_samples_leaf': [2, 12, 2],
+    'min_samples_split': range(2, 10, 2),
+    'max_features': ['sqrt'],
+    'max_depth': [10, 15, 20, 25, 30],
+    'n_jobs': [-1]
+    }
+    cmapss_scorer = make_scorer(rul_score, greater_is_better=False)
+
+    grid_search = GridSearchCV(
+            RandomForestRegressor(), 
+            param_grid=param_grid, 
+            cv=3, 
+            verbose=3,
+            scoring=cmapss_scorer)
+    grid_search.fit(X_train, y_train)
+
+    print("Best Parameters:", grid_search.best_params_)
+    print("Best Estimator:", grid_search.best_estimator_)
+
+    # Best results:
+    # Best Parameters: {'max_depth': 20, 'max_features': 'sqrt', 'min_samples_leaf': 2, 'min_samples_split': 8, 'n_estimators': 40, 'n_jobs': -1}                                             
+    # Best Estimator: RandomForestRegressor(max_depth=20, max_features='sqrt', min_samples_leaf=2,                      min_samples_split=8, n_estimators=40, n_jobs=-1)
+    # Manual tuning yields better results.
+
+    return
+
 def RandomForestModel(df_train_split, df_test_split, feature_columns, debug=False):
     printHeading("Random Forest Model")
 
     ## Extract X and Y data:
     target_col = RUL_CLIPPED_COLUMN
-    feature_cols = feature_columns + TOTAL_COND_CYCLE_COLS
+    feature_cols = feature_columns #+ TOTAL_COND_CYCLE_COLS
     
     print(f"Target column: {RUL_CLIPPED_COLUMN}")
     print(f"Feature columns: {feature_cols}")
@@ -572,10 +615,12 @@ def RandomForestModel(df_train_split, df_test_split, feature_columns, debug=Fals
             n_estimators=NUM_TREES,
             min_samples_leaf=MIN_SAMPLES_LEAF,
             max_features=MAX_FEATURES,
-            #min_samples_split=MIN_SAMPLES_SPLIT,
+            min_samples_split=MIN_SAMPLES_SPLIT,
             max_depth=MAX_DEPTH,
             n_jobs=-1,
             )
+    # model = RandomForestRegressor(max_depth=20, max_features='sqrt', min_samples_leaf=2,
+    #                   min_samples_split=8, n_estimators=40, n_jobs=-1)
 
     model.fit(X_train, y_train)
 
@@ -593,11 +638,6 @@ def EvaluateModel(df, model, X, y, feature_cols, identifier, debug=True):
     rmse = np.sqrt(mean_squared_error(y, y_pred))
     print(f"RMSE ({identifier}): {rmse:.2f}")
 
-    # NASA's score (common for RUL)
-    def rul_score(y_test, y_pred):
-        diff = y_pred - y_test
-        score = np.sum(np.where(diff < 0, np.exp(-diff/13) - 1, np.exp(diff/10) - 1))
-        return score
     print(f"NASA Score ({identifier}): {rul_score(y, y_pred):.2f}")
 
     # Scatter plot
@@ -637,6 +677,7 @@ df_train = LoadData()
 df_train = PrepareData(df_train)
 df_train, feature_columns, sample_units = FeatureEngineering(df_train)
 df_train_split, df_test_split = TrainTestSplit(df_train)
+#HyperparameterTuning(df_train_split, feature_columns)
 model, feature_cols, X_test, y_test, X_train, y_train = RandomForestModel(df_train_split, df_test_split, feature_columns)
 EvaluateModel(df_train_split, model, X_train, y_train, feature_cols, "Training Split")
 EvaluateModel(df_test_split, model, X_test, y_test, feature_cols, "Testing Split")
