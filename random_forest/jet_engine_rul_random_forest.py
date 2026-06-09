@@ -120,13 +120,15 @@ SENSOR_VARIANCE_LIMIT = 100
 RUL_LIMIT = 150
 SAMPLE_UNITS = 25
 
-TEST_SIZE = 0.3
+TEST_SIZE = 0.3 # Train/test split size
 
 EMA_SPAN = 15 # EMA span for filtering out white noise without flattening critical curves near EOL.
-MIN_SAMPLES_LEAF = 1
-MIN_SAMPLES_SPLIT = 2
-NUM_TREES = 50
-MAX_DEPTH = None
+
+NUM_TREES = 150 # More trees reduce variance
+MAX_DEPTH = 12  # Cap depth to prevent memorizing exact rows
+MIN_SAMPLES_LEAF = 5 # Let every leaf represent a general trend instead of a single sample
+MAX_FEATURES = 'sqrt' # Force tree diversity
+#MIN_SAMPLES_SPLIT = 2
 
 def printHeading(heading):
     c = "#"
@@ -596,7 +598,8 @@ def RandomForestModel(df_train_split, df_test_split, feature_columns, debug=Fals
     model = RandomForestRegressor(
             n_estimators=NUM_TREES,
             min_samples_leaf=MIN_SAMPLES_LEAF,
-            min_samples_split=MIN_SAMPLES_SPLIT,
+            max_features=MAX_FEATURES,
+            #min_samples_split=MIN_SAMPLES_SPLIT,
             max_depth=MAX_DEPTH,
             n_jobs=-1,
             )
