@@ -18,10 +18,34 @@ from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import StandardScaler
 
 
-TRAINING_FILE = "../Data/train_FD001.txt"
-#TRAINING_FILE = "../Data/train_FD002.txt"
+#TRAINING_FILE = "../Data/train_FD001.txt"
+TRAINING_FILE = "../Data/train_FD002.txt"
 #TRAINING_FILE = "../Data/train_FD003.txt"
 #TRAINING_FILE = "../Data/train_FD004.txt"
+
+# Parameter Tuning:
+if "FD001" in TRAINING_FILE or "FD003" in TRAINING_FILE:
+    EMA_SPAN = 20 # EMA span for filtering out white noise without flattening critical curves near EOL.
+    MEAN_WINDOW = 50 # 
+    STD_WINDOW = 55 # 
+    NUM_TREES = 200 # More trees reduce variance
+    MAX_DEPTH = 15  # Cap depth to prevent memorizing exact rows
+    MIN_SAMPLES_LEAF = 2 # Let every leaf represent a general trend instead of a single sample
+    MIN_SAMPLES_SPLIT = 15 # 
+    NASA_SAFETY_BUFFER = 5 # Force model to predict a bit earlier
+    RUL_LIMIT = 100
+else: # FD002 and FD004
+    EMA_SPAN = 15 # EMA span for filtering out white noise without flattening critical curves near EOL.
+    MEAN_WINDOW = 50 # 
+    STD_WINDOW = 55 # 
+    NUM_TREES = 200 # More trees reduce variance
+    MAX_DEPTH = 15  # Cap depth to prevent memorizing exact rows
+    MIN_SAMPLES_LEAF = 2 # Let every leaf represent a general trend instead of a single sample
+    MIN_SAMPLES_SPLIT = 15 # 
+    NASA_SAFETY_BUFFER = 5 # Force model to predict a bit earlier
+    RUL_LIMIT = 100
+
+MAX_FEATURES = 'sqrt' # Force tree diversity
 
 OUTPUT_DIR = Path(f"output/{TRAINING_FILE.split('/')[-1].split('.')[0]}")
 print(OUTPUT_DIR)
@@ -119,17 +143,6 @@ RANDOM_STATE = 42
 SAMPLE_UNITS = 25
 TEST_SIZE = 0.3 # Train/test split size
 
-# Parameter Tuning:
-EMA_SPAN = 20 # EMA span for filtering out white noise without flattening critical curves near EOL.
-MEAN_WINDOW = 50 # 
-STD_WINDOW = 55 # 
-NUM_TREES = 200 # More trees reduce variance
-MAX_DEPTH = 15  # Cap depth to prevent memorizing exact rows
-MIN_SAMPLES_LEAF = 2 # Let every leaf represent a general trend instead of a single sample
-MIN_SAMPLES_SPLIT = 15 # 
-MAX_FEATURES = 'sqrt' # Force tree diversity
-NASA_SAFETY_BUFFER = 5 # Force model to predict a bit earlier
-RUL_LIMIT = 100
 
 def printHeading(heading):
     c = "#"
@@ -618,6 +631,7 @@ def RandomForestModel(df_train_split, df_test_split, feature_columns, debug=Fals
             min_samples_split=MIN_SAMPLES_SPLIT,
             max_depth=MAX_DEPTH,
             n_jobs=-1,
+            random_state=RANDOM_STATE
             )
     # model = RandomForestRegressor(max_depth=20, max_features='sqrt', min_samples_leaf=2,
     #                   min_samples_split=8, n_estimators=40, n_jobs=-1)
