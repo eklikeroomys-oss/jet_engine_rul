@@ -24,25 +24,26 @@ class Set(Enum):
     FD003 = 3
     FD004 = 4
 
-CURRENT_SET = Set.FD004
+CURRENT_SET = Set.FD001
 #TUNE = True
 TUNE = False
+
 if CURRENT_SET == Set.FD001:
     EMA_SPAN = 20 # EMA span for filtering out white noise without flattening critical curves near EOL.
     MEAN_WINDOW = 50 # 
     STD_WINDOW = 55 # 
 
     # Parameter Tuning From GridSearch:
-    # Best Estimator: RandomForestRegressor(max_depth=10, max_features='sqrt', min_samples_leaf=2, min_samples_split=6, n_estimators=240, n_jobs=-1, random_state=42)
+    # Best Estimator: RandomForestRegressor(max_depth=11, max_features='sqrt', min_samples_leaf=8, min_samples_split=5, n_estimators=200, n_jobs=-1, random_state=42)
     # Validation:
-    # RMSE (Training Split): 2.07
-    # NASA Score (Training Split): 2193
-    # RMSE (Testing Split): 12.13
-    # NASA Score (Testing Split): 14839
-    NUM_TREES = 220
-    MAX_DEPTH = 15
+    # RMSE (Training Split): 3.68
+    # NASA Score (Training Split): 4503
+    # RMSE (Testing Split): 11.86
+    # NASA Score (Testing Split): 13860
+    NUM_TREES = 200
+    MAX_DEPTH = 11
     MIN_SAMPLES_LEAF = 8
-    MIN_SAMPLES_SPLIT = 8
+    MIN_SAMPLES_SPLIT = 5
 
     NASA_SAFETY_BUFFER = 0 # Force model to predict a bit earlier
     RUL_LIMIT = 130
@@ -54,15 +55,16 @@ elif CURRENT_SET == Set.FD002:
     # Parameter Tuning From GridSearch:
     # Best Estimator: RandomForestRegressor(max_depth=20, max_features='sqrt', min_samples_leaf=6, n_estimators=120, n_jobs=-1, random_state=42)
                     # RandomForestRegressor(max_depth=20, max_features='sqrt', min_samples_leaf=8, n_estimators=120, n_jobs=-1, random_state=42)
+                    # RandomForestRegressor(max_depth=10, max_features='sqrt', min_samples_leaf=2, min_samples_split=6, n_estimators=180, n_jobs=-1, random_state=42)
     # Validation:
     # RMSE (Training Split): 2.80
     # NASA Score (Training Split): 8119
     # RMSE (Testing Split): 12.71
     # NASA Score (Testing Split): 52654
-    NUM_TREES = 120 # More trees reduce variance
-    MAX_DEPTH = 20  # Cap depth to prevent memorizing exact rows
-    MIN_SAMPLES_LEAF = 8 # Let every leaf represent a general trend instead of a single sample
-    MIN_SAMPLES_SPLIT = 2 # 
+    NUM_TREES = 180 # More trees reduce variance
+    MAX_DEPTH = 10  # Cap depth to prevent memorizing exact rows
+    MIN_SAMPLES_LEAF = 2 # Let every leaf represent a general trend instead of a single sample
+    MIN_SAMPLES_SPLIT = 6 # 
     NASA_SAFETY_BUFFER = 0 # Force model to predict a bit earlier
     RUL_LIMIT = 130
 elif CURRENT_SET == Set.FD003:
@@ -105,6 +107,17 @@ elif CURRENT_SET == Set.FD004:
     RUL_LIMIT = 130
 
 MAX_FEATURES = 'sqrt' # Force tree diversity
+
+RANDOM_STATE = 42
+PARAM_GRID = {
+'n_estimators': range(180, 220, 10),
+'max_depth': range(8, 12, 1),
+'min_samples_leaf': range(5, 10, 1),
+'min_samples_split': range(5, 10, 1),
+'max_features': ['sqrt'],
+'random_state': [RANDOM_STATE],
+'n_jobs': [-1]
+}
 
 
 training_files = {
@@ -193,23 +206,21 @@ TOTAL_COND_3 = "Total Cycles Condition 3"
 TOTAL_COND_4 = "Total Cycles Condition 4"
 TOTAL_COND_5 = "Total Cycles Condition 5"
 TOTAL_COND_6 = "Total Cycles Condition 6"
-TOTAL_COND_CYCLE_COLS = [
-        TOTAL_COND_1,
-        TOTAL_COND_2,
-        TOTAL_COND_3,
-        TOTAL_COND_4,
-        TOTAL_COND_5,
-        TOTAL_COND_6
-        ]
 
 # Constants from given data
-NUM_OPERATIONAL_CONDITIONS = 6
+NUM_OPERATIONAL_CONDITIONS = {
+        Set.FD001: 1,
+        Set.FD002: 6,
+        Set.FD003: 1,
+        Set.FD004: 6
+}
+
 OPERATIONAL_PARAMS = [COLUMN_NAMES[Column.Altitude], COLUMN_NAMES[Column.MachNumber], COLUMN_NAMES[Column.TRA]]
 SILHOUETTE_SCORE_SAMPLE_SIZE = 5000 # Silhouette score sample size for operational condition clustering.
-RANDOM_STATE = 42
 SAMPLE_UNITS = 25
 TEST_SIZE = 0.3 # Train/test split size
 
+DPI=100
 
 def printHeading(heading):
     c = "#"
@@ -234,7 +245,7 @@ def PlotHistogram(data, bins, title, xlabel, ylabel):
     plt.title(title)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
-    plt.savefig(f"{OUTPUT_DIR}/{title.replace(" ", "_")}.png", bbox_inches='tight', dpi=300)
+    plt.savefig(f"{OUTPUT_DIR}/{title.replace(" ", "_")}.png", bbox_inches='tight', dpi=DPI)
     plt.close()
 
 def PrepareData(df_train, debug=False):
@@ -315,22 +326,23 @@ def FeatureEngineering(df_train, debug=False):
         df_operational_params_scaled = operational_params_scaler.fit_transform(df_operational_params)
 
         print("\tPerforming KMeans fit")
-        km = KMeans(n_clusters=NUM_OPERATIONAL_CONDITIONS)
+        km = KMeans(n_clusters=NUM_OPERATIONAL_CONDITIONS[CURRENT_SET])
         df_train[CONDITIONS_COLUMN] = km.fit_predict(df_operational_params_scaled)
         print("\t\tCluster centers :")
         operational_condition_centers = operational_params_scaler.inverse_transform(km.cluster_centers_)
-        for i in range(NUM_OPERATIONAL_CONDITIONS):
+        for i in range(NUM_OPERATIONAL_CONDITIONS[CURRENT_SET]):
             print(f"\t\tCondition {i+1}: {OPERATIONAL_PARAMS[0]} = {int(operational_condition_centers[i][0] * 1000)}Ft, \
                     {OPERATIONAL_PARAMS[1]} = {round(operational_condition_centers[i][1], 2)}, {OPERATIONAL_PARAMS[2]} = {round(operational_condition_centers[i][2], 2)}")
 
-        print("\tCalculating operating condition clusters silhouette score...")
-        print(f"\t\tResult: {silhouette_score(df_operational_params_scaled, df_train[CONDITIONS_COLUMN], metric="euclidean", sample_size=SILHOUETTE_SCORE_SAMPLE_SIZE, random_state=RANDOM_STATE)}")
+        if NUM_OPERATIONAL_CONDITIONS[CURRENT_SET] > 1:
+            print("\tCalculating operating condition clusters silhouette score...")
+            print(f"\t\tResult: {silhouette_score(df_operational_params_scaled, df_train[CONDITIONS_COLUMN], metric="euclidean", sample_size=SILHOUETTE_SCORE_SAMPLE_SIZE, random_state=RANDOM_STATE)}")
 
         print("\tPlotting clusters...")
         operational_conditions_fig = plt.figure(figsize=(10,8))
         ax = operational_conditions_fig.add_subplot(111, projection='3d')
         operational_conditions_colors = ['#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00', '#ffff33']
-        for cluster in range(NUM_OPERATIONAL_CONDITIONS):
+        for cluster in range(NUM_OPERATIONAL_CONDITIONS[CURRENT_SET]):
             cluster_data = df_train[df_train[CONDITIONS_COLUMN] == cluster]
 
             ax.scatter(
@@ -347,7 +359,7 @@ def FeatureEngineering(df_train, debug=False):
         ax.set_zlabel(COLUMN_NAMES[Column.TRA])
         ax.set_title("Operational Condition Clusters")
         ax.legend()
-        plt.savefig(f"{OUTPUT_DIR}/Operational_Condition_Clusters.png", bbox_inches='tight', dpi=300)
+        plt.savefig(f"{OUTPUT_DIR}/Operational_Condition_Clusters.png", bbox_inches='tight', dpi=DPI)
         plt.close()
 
         print("\tPlotting operational condition over cycles for a few sample engines...")
@@ -364,7 +376,7 @@ def FeatureEngineering(df_train, debug=False):
         plt.title('Operational Condition over Time for Sample Engines')
         plt.legend()
         plt.grid(True, alpha=0.3)
-        plt.savefig(f"{OUTPUT_DIR}/Operational_Condition_Per_Engine_Sample.png", bbox_inches='tight', dpi=300)
+        plt.savefig(f"{OUTPUT_DIR}/Operational_Condition_Per_Engine_Sample.png", bbox_inches='tight', dpi=DPI)
         plt.close()
         # From the graph above it is clear that each engine operates at many different operating conditions, not just one.
         # We should try to calculate an average of all previous conditions at each time step for the final result.
@@ -378,16 +390,16 @@ def FeatureEngineering(df_train, debug=False):
         print("\nAdding cumulative cycles per operational condition...")
         
         # 2. Cumulative cycles for EACH of the 6 conditions
-        for cond in range(NUM_OPERATIONAL_CONDITIONS):
+        for cond in range(NUM_OPERATIONAL_CONDITIONS[CURRENT_SET]):
             # Create indicator (1 if in this condition, 0 otherwise)
-            df_train[TOTAL_COND_CYCLE_COLS[cond]] = (df_train[CONDITIONS_COLUMN] == cond).astype(int)
+            df_train[f"TOTAL_COND_{cond}"] = (df_train[CONDITIONS_COLUMN] == cond).astype(int)
             # Cumulative sum per engine
-            df_train[TOTAL_COND_CYCLE_COLS[cond]] = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[TOTAL_COND_CYCLE_COLS[cond]].cumsum()
+            df_train[f"TOTAL_COND_{cond}"] = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[f"TOTAL_COND_{cond}"].cumsum()
         
         if debug:
             cols_to_show = [COLUMN_NAMES[Column.UnitNumber], CONDITIONS_COLUMN, 
                            'Cumul_Cycles_Current_Cond'] + \
-                          [f'Cumul_Cycles_Cond_{i}' for i in range(NUM_OPERATIONAL_CONDITIONS)]
+                          [f'Cumul_Cycles_Cond_{i}' for i in range(NUM_OPERATIONAL_CONDITIONS[CURRENT_SET])]
             print(df_train[cols_to_show].head(15))
         
         print("\tPlotting cumulative cycles per condition for sample engines...")
@@ -398,7 +410,8 @@ def FeatureEngineering(df_train, debug=False):
         plt.figure(figsize=(12, 6))
         
         # Plot cumulative cycles for each condition
-        for col in TOTAL_COND_CYCLE_COLS:
+        total_cond_columns = [col for col in df_train.columns if col.startswith("TOTAL_COND_")]
+        for col in total_cond_columns:
             plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], 
                     unit_data[col], 
                     label=col)
@@ -409,16 +422,17 @@ def FeatureEngineering(df_train, debug=False):
         plt.legend()
         plt.grid(True, alpha=0.3)
         plt.savefig(f"{OUTPUT_DIR}/Cumulative_Condition_Cycles_Sample_Unit.png", 
-                   bbox_inches='tight', dpi=300)
+                   bbox_inches='tight', dpi=DPI)
         plt.close()
 
         # Add condition columns to features:
-        feature_columns = [CONDITIONS_COLUMN] + TOTAL_COND_CYCLE_COLS
+        feature_columns = [CONDITIONS_COLUMN] + total_cond_columns
         
         return df_train, feature_columns
 
     def NormalizePerCondition(df_train):
         print("\nNormalizing data per condition...")
+
         sensor_columns = [COLUMN_NAMES[col] for col in Column if Column.T2.value <= col.value <= Column.W32.value]
 
         scaler = StandardScaler()
@@ -464,7 +478,7 @@ def FeatureEngineering(df_train, debug=False):
             plt.legend()
             plt.grid(True, alpha=0.3)
             plt.savefig(f"{OUTPUT_DIR}/Sensor_{c}_vs_RUL.png", 
-                       bbox_inches='tight', dpi=300)
+                       bbox_inches='tight', dpi=DPI)
             plt.close()
 
         if debug:
@@ -544,7 +558,7 @@ def FeatureEngineering(df_train, debug=False):
             plt.legend()
             plt.grid(True, alpha=0.3)
             plt.savefig(f"{OUTPUT_DIR}/Rolling_Sensor_{smoothed}_vs_Time.png", 
-                       bbox_inches='tight', dpi=300)
+                       bbox_inches='tight', dpi=DPI)
             plt.close()
 
 
@@ -604,7 +618,6 @@ def TrainTestSplit(df_train, debug=False):
     print(f"Train engines: {len(train_units)}, Test engines: {len(test_units)}")
     return df_train_split, df_test_split
 
-
 # NASA's score (common for RUL)
 def rul_score(y_test, y_pred):
     diff = y_pred - y_test
@@ -627,19 +640,9 @@ def HyperparameterTuning(df_train_split, df_test_split, feature_columns, debug=F
     X_test = df_test_split[feature_cols].values
     y_test = df_test_split[target_col].values
 
-    param_grid = {
-    'n_estimators': range(60, 300, 20),
-    'max_depth': range(5, 25, 5),
-    'min_samples_leaf': range(2, 14, 2),
-    'min_samples_split': range(2, 14, 2),
-    'max_features': ['sqrt'],
-    'random_state': [RANDOM_STATE],
-    'n_jobs': [-1]
-    }
-
     search = GridSearchCV(
             estimator=RandomForestRegressor(), 
-            param_grid=param_grid, 
+            param_grid=PARAM_GRID, 
             cv=2, 
             verbose=3,
             scoring=CMAPSS_SCORER)
@@ -713,7 +716,7 @@ def EvaluateModel(df, model, X, y, feature_cols, identifier, debug=True):
     plt.title(f'Actual vs Predicted RUL ({identifier})')
     plt.grid(True)
     plt.savefig(f"{OUTPUT_DIR}/Predicted_vs_Actual_RUL_{identifier.replace(" ", "_")}.png", 
-               bbox_inches='tight', dpi=300)
+               bbox_inches='tight', dpi=DPI)
     plt.close()
 
     plt.figure(figsize=(12, 8))
@@ -733,7 +736,7 @@ def EvaluateModel(df, model, X, y, feature_cols, identifier, debug=True):
     plt.legend()
     plt.grid(True)
     plt.savefig(f"{OUTPUT_DIR}/Sample_Engine_Predictions_{identifier.replace(" ", "_")}.png", 
-               bbox_inches='tight', dpi=300)
+               bbox_inches='tight', dpi=DPI)
     plt.close()
 
 df_train = LoadData()
