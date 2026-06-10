@@ -14,17 +14,19 @@ from pathlib import Path
 from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, silhouette_score, make_scorer
-from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.model_selection import train_test_split, GridSearchCV, RandomizedSearchCV
 from sklearn.preprocessing import StandardScaler
 
 
-#TRAINING_FILE = "../Data/train_FD001.txt"
-TRAINING_FILE = "../Data/train_FD002.txt"
-#TRAINING_FILE = "../Data/train_FD003.txt"
-#TRAINING_FILE = "../Data/train_FD004.txt"
+class Set(Enum):
+    FD001 = 1
+    FD002 = 2
+    FD003 = 3
+    FD004 = 4
 
+CURRENT_SET = Set.FD001
 # Parameter Tuning:
-if "FD001" in TRAINING_FILE or "FD003" in TRAINING_FILE:
+if CURRENT_SET in [Set.FD001, Set.FD003]:
     EMA_SPAN = 20 # EMA span for filtering out white noise without flattening critical curves near EOL.
     MEAN_WINDOW = 50 # 
     STD_WINDOW = 55 # 
@@ -35,19 +37,27 @@ if "FD001" in TRAINING_FILE or "FD003" in TRAINING_FILE:
     NASA_SAFETY_BUFFER = 5 # Force model to predict a bit earlier
     RUL_LIMIT = 100
 else: # FD002 and FD004
-    EMA_SPAN = 15 # EMA span for filtering out white noise without flattening critical curves near EOL.
+    EMA_SPAN = 20 # EMA span for filtering out white noise without flattening critical curves near EOL.
     MEAN_WINDOW = 50 # 
-    STD_WINDOW = 55 # 
+    STD_WINDOW = 65 # 
     NUM_TREES = 200 # More trees reduce variance
     MAX_DEPTH = 15  # Cap depth to prevent memorizing exact rows
     MIN_SAMPLES_LEAF = 2 # Let every leaf represent a general trend instead of a single sample
     MIN_SAMPLES_SPLIT = 15 # 
-    NASA_SAFETY_BUFFER = 5 # Force model to predict a bit earlier
-    RUL_LIMIT = 100
+    NASA_SAFETY_BUFFER = 0 # Force model to predict a bit earlier
+    RUL_LIMIT = 130
 
 MAX_FEATURES = 'sqrt' # Force tree diversity
 
-OUTPUT_DIR = Path(f"output/{TRAINING_FILE.split('/')[-1].split('.')[0]}")
+
+training_files = {
+        Set.FD001: "../Data/train_FD001.txt",
+        Set.FD002: "../Data/train_FD002.txt",
+        Set.FD003: "../Data/train_FD003.txt",
+        Set.FD004: "../Data/train_FD004.txt",
+        }
+
+OUTPUT_DIR = Path(f"output/{training_files[CURRENT_SET].split('/')[-1].split('.')[0]}")
 print(OUTPUT_DIR)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -154,8 +164,8 @@ def printHeading(heading):
 def LoadData(debug=False):
     printHeading("Data Gathering")
     head_count = 5
-    print(f"Loading training file {TRAINING_FILE}...")
-    df_train = pd.read_csv(TRAINING_FILE, sep=' ', header=None)
+    print(f"Loading training file {CURRENT_SET.name}...")
+    df_train = pd.read_csv(training_files[CURRENT_SET], sep=' ', header=None)
     if debug: 
         print(df_train.head(head_count))
         print(df_train.describe())
@@ -336,11 +346,6 @@ def FeatureEngineering(df_train, debug=False):
                     unit_data[col], 
                     label=col)
         
-        # Also plot total cycles for reference
-        # plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], 
-        #         unit_data[COLUMN_NAMES[Column.TimeCycles]], 
-        #         label='Total Cycles', linestyle='--', color='black', alpha=0.7)
-        
         plt.xlabel('Cycle')
         plt.ylabel('Cumulative Cycles')
         plt.title(f'Cumulative Cycles per Condition - Unit {unit}')
@@ -349,8 +354,11 @@ def FeatureEngineering(df_train, debug=False):
         plt.savefig(f"{OUTPUT_DIR}/Cumulative_Condition_Cycles_Sample_Unit.png", 
                    bbox_inches='tight', dpi=300)
         plt.close()
+
+        # Add condition columns to features:
+        feature_columns = [CONDITIONS_COLUMN] + TOTAL_COND_CYCLE_COLS
         
-        return df_train
+        return df_train, feature_columns
 
     def SmoothSensorData(df_train, sample_units, debug=False):
         print("\nSmoothing and plotting sensor data...")
@@ -397,8 +405,7 @@ def FeatureEngineering(df_train, debug=False):
 
         return df_train, sensor_columns
 
-
-    def AddRollingFeatures(df_train, sensor_columns, sample_units, debug=False):
+    def AddRollingFeatures(df_train, sensor_columns, feature_columns, sample_units, debug=False):
         print("\nCreating rolling features...")
         # Random Forest does not understand time or sequences by itself.
         # It looks at one row at a time and makes a prediction based only on the numbers in that row.
@@ -474,7 +481,7 @@ def FeatureEngineering(df_train, debug=False):
 
 
         # The following features look promising:
-        feature_columns = [
+        feature_columns.extend([
                 
                 "BPR_EMA_SMOOTH",
                 "BPR_EMA_SMOOTH_ROLL_MEAN",
@@ -535,7 +542,7 @@ def FeatureEngineering(df_train, debug=False):
                 "W32_EMA_SMOOTH",
                 "W32_EMA_SMOOTH_ROLL_MEAN",
                 "W32_EMA_SMOOTH_ROLL_STD",
-                ]
+                ])
 
         return df_train, feature_columns
 
@@ -543,9 +550,9 @@ def FeatureEngineering(df_train, debug=False):
     df_train = CalculateRUL(df_train)
     df_train = ClipRUL(df_train)
     df_train, sample_units = ClusterOperationalConditions(df_train)
-    df_train = AddConditionCycleFeatures(df_train, sample_units)
+    df_train, feature_columns = AddConditionCycleFeatures(df_train, sample_units)
     df_train, sensor_columns = SmoothSensorData(df_train, sample_units)
-    df_train, feature_columns = AddRollingFeatures(df_train, sensor_columns, sample_units)
+    df_train, feature_columns = AddRollingFeatures(df_train, sensor_columns, feature_columns, sample_units)
 
     return df_train, feature_columns, sample_units
 
@@ -563,11 +570,11 @@ def TrainTestSplit(df_train, debug=False):
 def rul_score(y_test, y_pred):
     diff = y_pred - y_test
     score = np.sum(np.where(diff < 0, np.exp(-diff/13) - 1, np.exp(diff/10) - 1))
-    return score
+    return abs(score)
+CMAPSS_SCORER = make_scorer(rul_score, greater_is_better=False)
 
-
-def HyperparameterTuning(df_train_split, feature_columns, debug=False):
-    print("Hyperparameter tuning using GridSearchCV...")
+def HyperparameterTuning(df_train_split, df_test_split, feature_columns, debug=False):
+    printHeading("Hyperparameter Tuning")
 
     ## Extract X and Y data:
     target_col = RUL_CLIPPED_COLUMN
@@ -578,29 +585,36 @@ def HyperparameterTuning(df_train_split, feature_columns, debug=False):
 
     X_train = df_train_split[feature_cols].values
     y_train = df_train_split[target_col].values
+    X_test = df_test_split[feature_cols].values
+    y_test = df_test_split[target_col].values
 
     param_grid = {
-    'n_estimators': range(30, 70, 10),
-    'min_samples_leaf': [2, 12, 2],
-    'min_samples_split': range(2, 10, 2),
+    'n_estimators': range(50, 250, 10),
+    'max_depth': range(5, 25, 5),
+    'min_samples_leaf': range(2, 14, 2),
+    'min_samples_split': range(2, 14, 2),
     'max_features': ['sqrt'],
-    'max_depth': [10, 15, 20, 25, 30],
+    'random_state': [RANDOM_STATE],
     'n_jobs': [-1]
     }
-    cmapss_scorer = make_scorer(rul_score, greater_is_better=False)
 
-    grid_search = GridSearchCV(
-            RandomForestRegressor(), 
-            param_grid=param_grid, 
-            cv=3, 
+    search = RandomizedSearchCV(
+            estimator=RandomForestRegressor(), 
+            param_distributions=param_grid, 
+            n_iter=10,
+            cv=5, 
             verbose=3,
-            scoring=cmapss_scorer)
-    grid_search.fit(X_train, y_train)
+            scoring=CMAPSS_SCORER)
+    search.fit(X_train, y_train)
 
-    print("Best Parameters:", grid_search.best_params_)
-    print("Best Estimator:", grid_search.best_estimator_)
+    test = search.score(X_test, y_test)
 
-    # Best results:
+    print(test)
+
+    print("Best Parameters:", search.best_params_)
+    print("Best Estimator:", search.best_estimator_)
+
+    # Best results for FD001 and FD003:
     # Best Parameters: {'max_depth': 20, 'max_features': 'sqrt', 'min_samples_leaf': 2, 'min_samples_split': 8, 'n_estimators': 40, 'n_jobs': -1}                                             
     # Best Estimator: RandomForestRegressor(max_depth=20, max_features='sqrt', min_samples_leaf=2,                      min_samples_split=8, n_estimators=40, n_jobs=-1)
     # Manual tuning yields better results.
@@ -614,7 +628,7 @@ def RandomForestModel(df_train_split, df_test_split, feature_columns, debug=Fals
     target_col = RUL_CLIPPED_COLUMN
     feature_cols = feature_columns #+ TOTAL_COND_CYCLE_COLS
     
-    print(f"Target column: {RUL_CLIPPED_COLUMN}")
+    #print(f"Target column: {RUL_CLIPPED_COLUMN}")
     print(f"Feature columns: {feature_cols}")
 
     X_train = df_train_split[feature_cols].values
@@ -639,8 +653,8 @@ def RandomForestModel(df_train_split, df_test_split, feature_columns, debug=Fals
     model.fit(X_train, y_train)
 
     feature_importances = pd.Series(model.feature_importances_, index=feature_cols)
-    print("Feature imporances:")
-    print(feature_importances.sort_values(ascending=False).head(20))
+    #print("Feature imporances:")
+    #print(feature_importances.sort_values(ascending=False).head(20))
 
     return model, feature_cols, X_test, y_test, X_train, y_train
 
@@ -691,7 +705,7 @@ df_train = LoadData()
 df_train = PrepareData(df_train)
 df_train, feature_columns, sample_units = FeatureEngineering(df_train)
 df_train_split, df_test_split = TrainTestSplit(df_train)
-#HyperparameterTuning(df_train_split, feature_columns)
-model, feature_cols, X_test, y_test, X_train, y_train = RandomForestModel(df_train_split, df_test_split, feature_columns)
-EvaluateModel(df_train_split, model, X_train, y_train, feature_cols, "Training Split")
-EvaluateModel(df_test_split, model, X_test, y_test, feature_cols, "Testing Split")
+HyperparameterTuning(df_train_split, df_test_split, feature_columns)
+#model, feature_cols, X_test, y_test, X_train, y_train = RandomForestModel(df_train_split, df_test_split, feature_columns)
+#EvaluateModel(df_train_split, model, X_train, y_train, feature_cols, "Training Split")
+#EvaluateModel(df_test_split, model, X_test, y_test, feature_cols, "Testing Split")
