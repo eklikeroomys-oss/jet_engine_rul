@@ -24,26 +24,83 @@ class Set(Enum):
     FD003 = 3
     FD004 = 4
 
-CURRENT_SET = Set.FD001
-# Parameter Tuning:
-if CURRENT_SET in [Set.FD001, Set.FD003]:
+CURRENT_SET = Set.FD004
+#TUNE = True
+TUNE = False
+if CURRENT_SET == Set.FD001:
     EMA_SPAN = 20 # EMA span for filtering out white noise without flattening critical curves near EOL.
     MEAN_WINDOW = 50 # 
     STD_WINDOW = 55 # 
-    NUM_TREES = 200 # More trees reduce variance
-    MAX_DEPTH = 15  # Cap depth to prevent memorizing exact rows
-    MIN_SAMPLES_LEAF = 2 # Let every leaf represent a general trend instead of a single sample
-    MIN_SAMPLES_SPLIT = 15 # 
-    NASA_SAFETY_BUFFER = 5 # Force model to predict a bit earlier
-    RUL_LIMIT = 100
-else: # FD002 and FD004
+
+    # Parameter Tuning From GridSearch:
+    # Best Estimator: RandomForestRegressor(max_depth=10, max_features='sqrt', min_samples_leaf=2, min_samples_split=6, n_estimators=240, n_jobs=-1, random_state=42)
+    # Validation:
+    # RMSE (Training Split): 2.07
+    # NASA Score (Training Split): 2193
+    # RMSE (Testing Split): 12.13
+    # NASA Score (Testing Split): 14839
+    NUM_TREES = 220
+    MAX_DEPTH = 15
+    MIN_SAMPLES_LEAF = 8
+    MIN_SAMPLES_SPLIT = 8
+
+    NASA_SAFETY_BUFFER = 0 # Force model to predict a bit earlier
+    RUL_LIMIT = 130
+elif CURRENT_SET == Set.FD002:
     EMA_SPAN = 20 # EMA span for filtering out white noise without flattening critical curves near EOL.
     MEAN_WINDOW = 50 # 
-    STD_WINDOW = 65 # 
-    NUM_TREES = 200 # More trees reduce variance
+    STD_WINDOW = 55 # 
+
+    # Parameter Tuning From GridSearch:
+    # Best Estimator: RandomForestRegressor(max_depth=20, max_features='sqrt', min_samples_leaf=6, n_estimators=120, n_jobs=-1, random_state=42)
+                    # RandomForestRegressor(max_depth=20, max_features='sqrt', min_samples_leaf=8, n_estimators=120, n_jobs=-1, random_state=42)
+    # Validation:
+    # RMSE (Training Split): 2.80
+    # NASA Score (Training Split): 8119
+    # RMSE (Testing Split): 12.71
+    # NASA Score (Testing Split): 52654
+    NUM_TREES = 120 # More trees reduce variance
+    MAX_DEPTH = 20  # Cap depth to prevent memorizing exact rows
+    MIN_SAMPLES_LEAF = 8 # Let every leaf represent a general trend instead of a single sample
+    MIN_SAMPLES_SPLIT = 2 # 
+    NASA_SAFETY_BUFFER = 0 # Force model to predict a bit earlier
+    RUL_LIMIT = 130
+elif CURRENT_SET == Set.FD003:
+    EMA_SPAN = 20 # EMA span for filtering out white noise without flattening critical curves near EOL.
+    MEAN_WINDOW = 50 # 
+    STD_WINDOW = 55 # 
+
+    # Parameter Tuning From GridSearch:
+    # Best Estimator: RandomForestRegressor(max_depth=15, max_features='sqrt', min_samples_leaf=2, min_samples_split=8, n_estimators=60, n_jobs=-1, random_state=42)
+    # Validation:
+    # RMSE (Training Split): 1.0
+    # NASA Score (Training Split): 1014
+    # RMSE (Testing Split): 9.85
+    # NASA Score (Testing Split): 12069
+    NUM_TREES = 60 # More trees reduce variance
     MAX_DEPTH = 15  # Cap depth to prevent memorizing exact rows
     MIN_SAMPLES_LEAF = 2 # Let every leaf represent a general trend instead of a single sample
-    MIN_SAMPLES_SPLIT = 15 # 
+    MIN_SAMPLES_SPLIT = 8 # 
+
+    NASA_SAFETY_BUFFER = 0 # Force model to predict a bit earlier
+    RUL_LIMIT = 130
+elif CURRENT_SET == Set.FD004:
+    EMA_SPAN = 20 # EMA span for filtering out white noise without flattening critical curves near EOL.
+    MEAN_WINDOW = 50 # 
+    STD_WINDOW = 55 # 
+
+    # Parameter Tuning From GridSearch:
+    # Best Estimator: RandomForestRegressor(max_depth=15, max_features='sqrt', min_samples_leaf=2, min_samples_split=10, n_estimators=120, n_jobs=-1, random_state=42)
+    # Validation:
+    # RMSE (Training Split): 2.95
+    # NASA Score (Training Split): 9259
+    # RMSE (Testing Split): 15.02
+    # NASA Score (Testing Split): 98493
+    NUM_TREES = 120 # More trees reduce variance
+    MAX_DEPTH = 15  # Cap depth to prevent memorizing exact rows
+    MIN_SAMPLES_LEAF = 2 # Let every leaf represent a general trend instead of a single sample
+    MIN_SAMPLES_SPLIT = 10 # 
+
     NASA_SAFETY_BUFFER = 0 # Force model to predict a bit earlier
     RUL_LIMIT = 130
 
@@ -360,6 +417,17 @@ def FeatureEngineering(df_train, debug=False):
         
         return df_train, feature_columns
 
+    def NormalizePerCondition(df_train):
+        print("\nNormalizing data per condition...")
+        sensor_columns = [COLUMN_NAMES[col] for col in Column if Column.T2.value <= col.value <= Column.W32.value]
+
+        scaler = StandardScaler()
+        # Apply the scaler to each group individually
+        df_train[sensor_columns] = df_train.groupby(CONDITIONS_COLUMN)[sensor_columns].transform(
+            lambda x: scaler.fit_transform(x.to_frame()).flatten())
+
+        return df_train
+
     def SmoothSensorData(df_train, sample_units, debug=False):
         print("\nSmoothing and plotting sensor data...")
 
@@ -480,69 +548,39 @@ def FeatureEngineering(df_train, debug=False):
             plt.close()
 
 
-        # The following features look promising:
-        feature_columns.extend([
-                
-                "BPR_EMA_SMOOTH",
-                "BPR_EMA_SMOOTH_ROLL_MEAN",
-                "BPR_EMA_SMOOTH_ROLL_STD",
+        # Map sensors relevant to data sets:
+        feature_column_map = {
+                                #FD001      FD002       FD003       FD004
+            Column.BPR:         [True,      True,       True,       True],
+            Column.epr:         [True,      True,       True,       True],
+            Column.farB:        [True,      True,       True,       True],
+            Column.htBleed:     [True,      True,       True,       True],
+            Column.Nc:          [True,      True,       True,       True],
+            Column.Nf_dmd:      [False,     False,      False,      True],
+            Column.Nf:          [True,      True,       True,       True],
+            Column.NRc:         [True,      True,       True,       True],
+            Column.NRf:         [True,      True,       True,       True],
+            Column.P2:          [True,      True,       True,       True],
+            Column.P15:         [True,      True,       True,       True],
+            Column.P30:         [True,      True,       True,       True],
+            Column.PCNfR_dmd:   [False,     True,       False,      True],
+            Column.phi:         [True,      True,       True,       True],
+            Column.Ps30:        [True,      True,       True,       True],
+            Column.T2:          [True,      True,       True,       True],
+            Column.T24:         [True,      True,       True,       True],
+            Column.T30:         [True,      True,       True,       True],
+            Column.T50:         [True,      True,       True,       True],
+            Column.W31:         [True,      True,       True,       True],
+            Column.W32:         [True,      True,       True,       True],
+        }
 
-                "htBleed_EMA_SMOOTH",
-                "htBleed_EMA_SMOOTH_ROLL_MEAN",
-                "htBleed_EMA_SMOOTH_ROLL_STD",
-
-                "Nc_EMA_SMOOTH",
-                "Nc_EMA_SMOOTH_ROLL_MEAN",
-                "Nc_EMA_SMOOTH_ROLL_STD",
-
-                "Nf_EMA_SMOOTH",
-                "Nf_EMA_SMOOTH_ROLL_MEAN",
-                "Nf_EMA_SMOOTH_ROLL_STD",
-
-                "NRc_EMA_SMOOTH",
-                "NRc_EMA_SMOOTH_ROLL_MEAN",
-                "NRc_EMA_SMOOTH_ROLL_STD",
-
-                "NRf_EMA_SMOOTH",
-                "NRf_EMA_SMOOTH_ROLL_MEAN",
-                "NRf_EMA_SMOOTH_ROLL_STD",
-
-                "P15_EMA_SMOOTH",
-                "P15_EMA_SMOOTH_ROLL_MEAN",
-                "P15_EMA_SMOOTH_ROLL_STD",
-
-                "P30_EMA_SMOOTH",
-                "P30_EMA_SMOOTH_ROLL_MEAN",
-                "P30_EMA_SMOOTH_ROLL_STD",
-
-                "phi_EMA_SMOOTH",
-                "phi_EMA_SMOOTH_ROLL_MEAN",
-                "phi_EMA_SMOOTH_ROLL_STD",
-
-                "Ps30_EMA_SMOOTH",
-                "Ps30_EMA_SMOOTH_ROLL_MEAN",
-                "Ps30_EMA_SMOOTH_ROLL_STD",
-
-                "T24_EMA_SMOOTH",
-                "T24_EMA_SMOOTH_ROLL_MEAN",
-                "T24_EMA_SMOOTH_ROLL_STD",
-                
-                "T30_EMA_SMOOTH",
-                "T30_EMA_SMOOTH_ROLL_MEAN",
-                "T30_EMA_SMOOTH_ROLL_STD",
-
-                "T50_EMA_SMOOTH",
-                "T50_EMA_SMOOTH_ROLL_MEAN",
-                "T50_EMA_SMOOTH_ROLL_STD",
-
-                "W31_EMA_SMOOTH",
-                "W31_EMA_SMOOTH_ROLL_MEAN",
-                "W31_EMA_SMOOTH_ROLL_STD",
-
-                "W32_EMA_SMOOTH",
-                "W32_EMA_SMOOTH_ROLL_MEAN",
-                "W32_EMA_SMOOTH_ROLL_STD",
-                ])
+        for k in feature_column_map.keys():
+            if feature_column_map[k][CURRENT_SET.value - 1] == True:
+                feature_columns.extend([
+                    f"{k.name}_EMA_SMOOTH",
+                    f"{k.name}_EMA_SMOOTH_ROLL_MEAN",
+                    f"{k.name}_EMA_SMOOTH_ROLL_STD",
+                    ])
 
         return df_train, feature_columns
 
@@ -551,6 +589,7 @@ def FeatureEngineering(df_train, debug=False):
     df_train = ClipRUL(df_train)
     df_train, sample_units = ClusterOperationalConditions(df_train)
     df_train, feature_columns = AddConditionCycleFeatures(df_train, sample_units)
+    df_train = NormalizePerCondition(df_train)
     df_train, sensor_columns = SmoothSensorData(df_train, sample_units)
     df_train, feature_columns = AddRollingFeatures(df_train, sensor_columns, feature_columns, sample_units)
 
@@ -578,7 +617,7 @@ def HyperparameterTuning(df_train_split, df_test_split, feature_columns, debug=F
 
     ## Extract X and Y data:
     target_col = RUL_CLIPPED_COLUMN
-    feature_cols = feature_columns + TOTAL_COND_CYCLE_COLS
+    feature_cols = feature_columns
     
     print(f"Target column: {RUL_CLIPPED_COLUMN}")
     print(f"Feature columns: {feature_cols}")
@@ -589,7 +628,7 @@ def HyperparameterTuning(df_train_split, df_test_split, feature_columns, debug=F
     y_test = df_test_split[target_col].values
 
     param_grid = {
-    'n_estimators': range(50, 250, 10),
+    'n_estimators': range(60, 300, 20),
     'max_depth': range(5, 25, 5),
     'min_samples_leaf': range(2, 14, 2),
     'min_samples_split': range(2, 14, 2),
@@ -598,21 +637,19 @@ def HyperparameterTuning(df_train_split, df_test_split, feature_columns, debug=F
     'n_jobs': [-1]
     }
 
-    search = RandomizedSearchCV(
+    search = GridSearchCV(
             estimator=RandomForestRegressor(), 
-            param_distributions=param_grid, 
-            n_iter=10,
-            cv=5, 
+            param_grid=param_grid, 
+            cv=2, 
             verbose=3,
             scoring=CMAPSS_SCORER)
     search.fit(X_train, y_train)
 
     test = search.score(X_test, y_test)
 
-    print(test)
-
     print("Best Parameters:", search.best_params_)
     print("Best Estimator:", search.best_estimator_)
+    print("Test Score:", test)
 
     # Best results for FD001 and FD003:
     # Best Parameters: {'max_depth': 20, 'max_features': 'sqrt', 'min_samples_leaf': 2, 'min_samples_split': 8, 'n_estimators': 40, 'n_jobs': -1}                                             
@@ -626,9 +663,9 @@ def RandomForestModel(df_train_split, df_test_split, feature_columns, debug=Fals
 
     ## Extract X and Y data:
     target_col = RUL_CLIPPED_COLUMN
-    feature_cols = feature_columns #+ TOTAL_COND_CYCLE_COLS
+    feature_cols = feature_columns
     
-    #print(f"Target column: {RUL_CLIPPED_COLUMN}")
+    print(f"Target column: {RUL_CLIPPED_COLUMN}")
     print(f"Feature columns: {feature_cols}")
 
     X_train = df_train_split[feature_cols].values
@@ -647,14 +684,12 @@ def RandomForestModel(df_train_split, df_test_split, feature_columns, debug=Fals
             n_jobs=-1,
             random_state=RANDOM_STATE
             )
-    # model = RandomForestRegressor(max_depth=20, max_features='sqrt', min_samples_leaf=2,
-    #                   min_samples_split=8, n_estimators=40, n_jobs=-1)
 
     model.fit(X_train, y_train)
 
     feature_importances = pd.Series(model.feature_importances_, index=feature_cols)
-    #print("Feature imporances:")
-    #print(feature_importances.sort_values(ascending=False).head(20))
+    print("Feature imporances:")
+    print(feature_importances.sort_values(ascending=False).head(20))
 
     return model, feature_cols, X_test, y_test, X_train, y_train
 
@@ -705,7 +740,10 @@ df_train = LoadData()
 df_train = PrepareData(df_train)
 df_train, feature_columns, sample_units = FeatureEngineering(df_train)
 df_train_split, df_test_split = TrainTestSplit(df_train)
-HyperparameterTuning(df_train_split, df_test_split, feature_columns)
-#model, feature_cols, X_test, y_test, X_train, y_train = RandomForestModel(df_train_split, df_test_split, feature_columns)
-#EvaluateModel(df_train_split, model, X_train, y_train, feature_cols, "Training Split")
-#EvaluateModel(df_test_split, model, X_test, y_test, feature_cols, "Testing Split")
+
+if TUNE:
+    HyperparameterTuning(df_train_split, df_test_split, feature_columns)
+else:
+    model, feature_cols, X_test, y_test, X_train, y_train = RandomForestModel(df_train_split, df_test_split, feature_columns)
+    EvaluateModel(df_train_split, model, X_train, y_train, feature_cols, "Training Split")
+    EvaluateModel(df_test_split, model, X_test, y_test, feature_cols, "Testing Split")
