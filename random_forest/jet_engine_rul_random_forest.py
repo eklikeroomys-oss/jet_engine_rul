@@ -24,7 +24,7 @@ class Set(Enum):
     FD003 = 3
     FD004 = 4
 
-CURRENT_SET = Set.FD001
+CURRENT_SET = Set.FD004
 #TUNE = True
 TUNE = False
 
@@ -566,21 +566,21 @@ def FeatureEngineering(df_train, debug=False):
         feature_column_map = {
                                 #FD001      FD002       FD003       FD004
             Column.BPR:         [True,      True,       True,       True],
-            Column.epr:         [True,      True,       True,       True],
-            Column.farB:        [True,      True,       True,       True],
+            Column.epr:         [False,     True,       True,       True],
+            Column.farB:        [False,     True,       False,      True],
             Column.htBleed:     [True,      True,       True,       True],
             Column.Nc:          [True,      True,       True,       True],
-            Column.Nf_dmd:      [False,     False,      False,      True],
+            Column.Nf_dmd:      [False,     False,      False,      False],
             Column.Nf:          [True,      True,       True,       True],
             Column.NRc:         [True,      True,       True,       True],
             Column.NRf:         [True,      True,       True,       True],
-            Column.P2:          [True,      True,       True,       True],
+            Column.P2:          [False,     True,       False,      True],
             Column.P15:         [True,      True,       True,       True],
             Column.P30:         [True,      True,       True,       True],
-            Column.PCNfR_dmd:   [False,     True,       False,      True],
+            Column.PCNfR_dmd:   [False,     True,       False,      False],
             Column.phi:         [True,      True,       True,       True],
             Column.Ps30:        [True,      True,       True,       True],
-            Column.T2:          [True,      True,       True,       True],
+            Column.T2:          [False,     True,       False,      True],
             Column.T24:         [True,      True,       True,       True],
             Column.T30:         [True,      True,       True,       True],
             Column.T50:         [True,      True,       True,       True],
