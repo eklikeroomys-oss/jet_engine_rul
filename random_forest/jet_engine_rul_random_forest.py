@@ -24,7 +24,7 @@ class Set(Enum):
     FD003 = 3
     FD004 = 4
 
-CURRENT_SET = Set.FD004
+CURRENT_SET = Set.FD001
 #TUNE = True
 TUNE = False
 
@@ -124,11 +124,16 @@ training_files = {
         }
 
 OUTPUT_DIR = Path(f"output/{CURRENT_SET.name}")
+
+RUL_DIR = Path(f"{OUTPUT_DIR}/RUL")
 CONDITION_DIR = Path(f"{OUTPUT_DIR}/Conditions")
 SENSORS_DIR = Path(f"{OUTPUT_DIR}/Sensors")
 RESULTS_DIR = Path(f"{OUTPUT_DIR}/Results")
-print(OUTPUT_DIR)
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+RUL_DIR.mkdir(parents=True, exist_ok=True)
+CONDITION_DIR.mkdir(parents=True, exist_ok=True)
+SENSORS_DIR.mkdir(parents=True, exist_ok=True)
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Enum with column indexes
 class Column(Enum):
@@ -239,12 +244,12 @@ def LoadData(debug=False):
 
     return df_train
 
-def PlotHistogram(data, bins, title, xlabel, ylabel):
+def PlotHistogram(data, bins, dir, title, xlabel, ylabel):
     plt.hist(data, bins=bins)
     plt.title(title)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
-    plt.savefig(f"{OUTPUT_DIR}/{title.replace(" ", "_")}.png", bbox_inches='tight', dpi=DPI)
+    plt.savefig(f"{dir}/{title.replace(" ", "_")}.png", bbox_inches='tight', dpi=DPI)
     plt.close()
 
 def PrepareData(df_train, debug=False):
@@ -292,7 +297,7 @@ def FeatureEngineering(df_train, debug=False):
 
         print("Plotting the RUL distribution for each Unit...")
         max_cycles_per_unit = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[RUL_COLUMN].max()
-        PlotHistogram(max_cycles_per_unit, 30, 'Distribution of Engine Lifespans', "Engine Lifespan", "Engine Count")
+        PlotHistogram(max_cycles_per_unit, 30, RUL_DIR, 'Distribution of Engine Lifespans', "Engine Lifespan", "Engine Count")
 
         if debug:
             print(max_cycles_per_unit.describe())
@@ -309,7 +314,7 @@ def FeatureEngineering(df_train, debug=False):
 
         print("Plotting the clipped RUL distribution for each Unit...")
         max_cycles_per_unit = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[RUL_CLIPPED_COLUMN].max()
-        PlotHistogram(max_cycles_per_unit, 5, 'Distribution of Clipped Engine Lifespans', "Engine Lifespan", "Engine Count")
+        PlotHistogram(max_cycles_per_unit, 5, RUL_DIR, 'Distribution of Clipped Engine Lifespans', "Engine Lifespan", "Engine Count")
 
         if debug:
             print(df_train.describe())
@@ -358,7 +363,7 @@ def FeatureEngineering(df_train, debug=False):
         ax.set_zlabel(COLUMN_NAMES[Column.TRA])
         ax.set_title("Operational Condition Clusters")
         ax.legend()
-        plt.savefig(f"{OUTPUT_DIR}/Operational_Condition_Clusters.png", bbox_inches='tight', dpi=DPI)
+        plt.savefig(f"{CONDITION_DIR}/Operational_Condition_Clusters.png", bbox_inches='tight', dpi=DPI)
         plt.close()
 
         print("\tPlotting operational condition over cycles for a few sample engines...")
@@ -372,10 +377,10 @@ def FeatureEngineering(df_train, debug=False):
 
         plt.xlabel('Cycle')
         plt.ylabel('Operational Condition')
-        plt.title('Operational Condition over Time for Sample Engines')
+        plt.title('Operational Condition vs Time')
         plt.legend()
         plt.grid(True, alpha=0.3)
-        plt.savefig(f"{OUTPUT_DIR}/Operational_Condition_Per_Engine_Sample.png", bbox_inches='tight', dpi=DPI)
+        plt.savefig(f"{CONDITION_DIR}/Operational_Condition_vs_Time.png", bbox_inches='tight', dpi=DPI)
         plt.close()
         # From the graph above it is clear that each engine operates at many different operating conditions, not just one.
         # We should try to calculate an average of all previous conditions at each time step for the final result.
@@ -417,10 +422,10 @@ def FeatureEngineering(df_train, debug=False):
         
         plt.xlabel('Cycle')
         plt.ylabel('Cumulative Cycles')
-        plt.title(f'Cumulative Cycles per Condition - Unit {unit}')
+        plt.title(f'Cumulative Condition Cycles - Unit {unit}')
         plt.legend()
         plt.grid(True, alpha=0.3)
-        plt.savefig(f"{OUTPUT_DIR}/Cumulative_Condition_Cycles_Sample_Unit.png", 
+        plt.savefig(f"{CONDITION_DIR}/Cumulative_Condition_Cycles.png", 
                    bbox_inches='tight', dpi=DPI)
         plt.close()
 
@@ -462,7 +467,7 @@ def FeatureEngineering(df_train, debug=False):
             plt.suptitle(f'Sensor {c} Normalized vs. RUL')
             plt.legend()
             plt.grid(True, alpha=0.3)
-            plt.savefig(f"{OUTPUT_DIR}/Sensor_{c}_Normalized_vs_RUL.png", 
+            plt.savefig(f"{SENSORS_DIR}/Sensor_{c}_Normalized_vs_RUL.png", 
                        bbox_inches='tight', dpi=DPI)
             plt.close()
         
@@ -504,7 +509,7 @@ def FeatureEngineering(df_train, debug=False):
             plt.suptitle(f'Sensor {c} vs. RUL')
             plt.legend()
             plt.grid(True, alpha=0.3)
-            plt.savefig(f"{OUTPUT_DIR}/Sensor_{c}_Smoothed_vs_RUL.png", 
+            plt.savefig(f"{SENSORS_DIR}/Sensor_{c}_Smoothed_vs_RUL.png", 
                        bbox_inches='tight', dpi=DPI)
             plt.close()
 
@@ -584,7 +589,7 @@ def FeatureEngineering(df_train, debug=False):
             plt.suptitle(f'Rolling Sensor {smoothed} vs. RUL')
             plt.legend()
             plt.grid(True, alpha=0.3)
-            plt.savefig(f"{OUTPUT_DIR}/Rolling_Sensor_{smoothed}_vs_Time.png", 
+            plt.savefig(f"{SENSORS_DIR}/Rolling_Sensor_{smoothed}_vs_Time.png", 
                        bbox_inches='tight', dpi=DPI)
             plt.close()
 
@@ -732,7 +737,7 @@ def EvaluateModel(df, model, X, y, feature_cols, identifier, debug=True):
     plt.ylabel('Predicted RUL')
     plt.title(f'Actual vs Predicted RUL ({identifier})')
     plt.grid(True)
-    plt.savefig(f"{OUTPUT_DIR}/Predicted_vs_Actual_RUL_{identifier.replace(" ", "_")}.png", 
+    plt.savefig(f"{RESULTS_DIR}/Predicted_vs_Actual_RUL_{identifier.replace(" ", "_")}.png", 
                bbox_inches='tight', dpi=DPI)
     plt.close()
 
@@ -752,7 +757,7 @@ def EvaluateModel(df, model, X, y, feature_cols, identifier, debug=True):
     plt.title('RUL Prediction over Cycles for Sample Engines')
     plt.legend()
     plt.grid(True)
-    plt.savefig(f"{OUTPUT_DIR}/Sample_Engine_Predictions_{identifier.replace(" ", "_")}.png", 
+    plt.savefig(f"{RESULTS_DIR}/Sample_Engine_Predictions_{identifier.replace(" ", "_")}.png", 
                bbox_inches='tight', dpi=DPI)
     plt.close()
 
