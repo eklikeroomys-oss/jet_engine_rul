@@ -24,7 +24,7 @@ class Set(Enum):
     FD003 = 3
     FD004 = 4
 
-CURRENT_SET = Set.FD003
+CURRENT_SET = Set.FD004
 #TUNE = True
 TUNE = False
 
@@ -83,32 +83,33 @@ elif CURRENT_SET == Set.FD003:
     #   NASA Score (Testing Split): 11637
     pass
 elif CURRENT_SET == Set.FD004:
-    EMA_SPAN = 20 # EMA span for filtering out white noise without flattening critical curves near EOL.
-    MEAN_WINDOW = 50 # 
-    STD_WINDOW = 55 # 
-
+    EMA_SPAN = 30 # Best window for smoothing
+    MEAN_WINDOW = 15 # Best window for calculating mean
+    STD_WINDOW = 65 # Best window for calculating STD
     # Parameter Tuning From GridSearch:
-    # Best Estimator: RandomForestRegressor(max_depth=15, max_features='sqrt', min_samples_leaf=2, min_samples_split=10, n_estimators=120, n_jobs=-1, random_state=42)
-    # Validation:
-    # RMSE (Training Split): 2.95
-    # NASA Score (Training Split): 9259
-    # RMSE (Testing Split): 15.02
-    # NASA Score (Testing Split): 98493
-    NUM_TREES = 120 # More trees reduce variance
-    MAX_DEPTH = 15  # Cap depth to prevent memorizing exact rows
-    MIN_SAMPLES_LEAF = 2 # Let every leaf represent a general trend instead of a single sample
-    MIN_SAMPLES_SPLIT = 10 # 
-    MAX_FEATURES = 'sqrt' # Force tree diversity
+    NUM_TREES = 450
+    MAX_DEPTH = 10
+    MIN_SAMPLES_LEAF = 4
+    MIN_SAMPLES_SPLIT = 14
+    MAX_FEATURES = 'sqrt'
+    # Final training results FD004:
+    # Best Estimator: RandomForestRegressor(max_depth=10, max_features='sqrt', min_samples_leaf=4, min_samples_split=14, n_estimators=450, n_jobs=-1, random_state=42)
+    # Validation using train/test split:
+    #   RMSE (Training Split): 7.10
+    #   NASA Score (Training Split): 54620
+    #   RMSE (Testing Split): 14.80
+    #   NASA Score (Testing Split): 96428
+    pass
 
 NASA_SAFETY_BUFFER = 0 # Force model to predict a bit earlier
 RUL_LIMIT = 130
 
 RANDOM_STATE = 42
 PARAM_GRID = {
-    'n_estimators': [430],
-    'max_depth': [16],
-    'min_samples_leaf': [2],
-    'min_samples_split': range(2, 20, 20),
+    'n_estimators': [450],
+    'max_depth': [10],
+    'min_samples_leaf': [4],
+    'min_samples_split': range(2, 20, 2),
     'max_features': ['sqrt'],
     'random_state': [RANDOM_STATE],
     'n_jobs': [-1]
