@@ -14,7 +14,7 @@ from pathlib import Path
 from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, silhouette_score, make_scorer
-from sklearn.model_selection import train_test_split, GridSearchCV, RandomizedSearchCV
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import StandardScaler
 
 
@@ -29,44 +29,41 @@ CURRENT_SET = Set.FD002
 TUNE = False
 
 if CURRENT_SET == Set.FD001:
-    EMA_SPAN = 20 # EMA span for filtering out white noise without flattening critical curves near EOL.
-    MEAN_WINDOW = 50 # 
-    STD_WINDOW = 55 # 
-
-    # Parameter Tuning From GridSearch:
-    # Best Estimator: RandomForestRegressor(max_depth=11, max_features='sqrt', min_samples_leaf=8, min_samples_split=5, n_estimators=200, n_jobs=-1, random_state=42)
-    # Validation:
-    # RMSE (Training Split): 3.68
-    # NASA Score (Training Split): 4503
-    # RMSE (Testing Split): 11.86
-    # NASA Score (Testing Split): 13860
-    NUM_TREES = 200
-    MAX_DEPTH = 11
-    MIN_SAMPLES_LEAF = 8
-    MIN_SAMPLES_SPLIT = 5
-
-    NASA_SAFETY_BUFFER = 0 # Force model to predict a bit earlier
-    RUL_LIMIT = 130
+    EMA_SPAN = 15 # Best window for smoothing
+    MEAN_WINDOW = 5 # Best window for calculating mean
+    STD_WINDOW = 100 # Best window for calculating STD
+    # Parameter tuning using GridSearchCV:
+    NUM_TREES = 50
+    MAX_DEPTH = 12
+    MIN_SAMPLES_LEAF = 2
+    MIN_SAMPLES_SPLIT = 18
+    MAX_FEATURES = 'sqrt'
+    # Final training results FD001:
+    # Best Estimator: RandomForestRegressor(max_depth=12, max_features='sqrt', min_samples_leaf=2, min_samples_split=18, n_estimators=50, n_jobs=-1, random_state=42)
+    # Validation using train/test split:
+    #   RMSE (Training Split): 3.26
+    #   NASA Score (Training Split): 3847
+    #   RMSE (Testing Split): 11.78
+    #   NASA Score (Testing Split): 13076
+    pass
 elif CURRENT_SET == Set.FD002:
-    EMA_SPAN = 20 # EMA span for filtering out white noise without flattening critical curves near EOL.
-    MEAN_WINDOW = 50 # 
-    STD_WINDOW = 55 # 
-
-    # Parameter Tuning From GridSearch:
-    # Best Estimator: RandomForestRegressor(max_depth=20, max_features='sqrt', min_samples_leaf=6, n_estimators=120, n_jobs=-1, random_state=42)
-                    # RandomForestRegressor(max_depth=20, max_features='sqrt', min_samples_leaf=8, n_estimators=120, n_jobs=-1, random_state=42)
-                    # RandomForestRegressor(max_depth=10, max_features='sqrt', min_samples_leaf=2, min_samples_split=6, n_estimators=180, n_jobs=-1, random_state=42)
-    # Validation:
-    # RMSE (Training Split): 2.80
-    # NASA Score (Training Split): 8119
-    # RMSE (Testing Split): 12.71
-    # NASA Score (Testing Split): 52654
-    NUM_TREES = 180 # More trees reduce variance
-    MAX_DEPTH = 10  # Cap depth to prevent memorizing exact rows
-    MIN_SAMPLES_LEAF = 2 # Let every leaf represent a general trend instead of a single sample
-    MIN_SAMPLES_SPLIT = 6 # 
-    NASA_SAFETY_BUFFER = 0 # Force model to predict a bit earlier
-    RUL_LIMIT = 130
+    EMA_SPAN = 25 # Best window for smoothing
+    MEAN_WINDOW = 5 # Best window for calculating mean
+    STD_WINDOW = 75 # Best window for calculating STD
+    # Parameter tuning using GridSearch:
+    NUM_TREES = 390
+    MAX_DEPTH = 18
+    MIN_SAMPLES_LEAF = 2
+    MIN_SAMPLES_SPLIT = 6
+    MAX_FEATURES = 'sqrt'
+    # Final training results FD002:
+    # Best Estimator: RandomForestRegressor(max_depth=18, max_features='sqrt', min_samples_leaf=2, min_samples_split=6, n_estimators=390, n_jobs=-1, random_state=42)
+    # Validation using train/test split:
+    #   RMSE (Training Split): 1.19
+    #   NASA Score (Training Split): 2986
+    #   RMSE (Testing Split): 12.62
+    #   NASA Score (Testing Split): 49015
+    pass
 elif CURRENT_SET == Set.FD003:
     EMA_SPAN = 20 # EMA span for filtering out white noise without flattening critical curves near EOL.
     MEAN_WINDOW = 50 # 
@@ -83,9 +80,7 @@ elif CURRENT_SET == Set.FD003:
     MAX_DEPTH = 15  # Cap depth to prevent memorizing exact rows
     MIN_SAMPLES_LEAF = 2 # Let every leaf represent a general trend instead of a single sample
     MIN_SAMPLES_SPLIT = 8 # 
-
-    NASA_SAFETY_BUFFER = 0 # Force model to predict a bit earlier
-    RUL_LIMIT = 130
+    MAX_FEATURES = 'sqrt' # Force tree diversity
 elif CURRENT_SET == Set.FD004:
     EMA_SPAN = 20 # EMA span for filtering out white noise without flattening critical curves near EOL.
     MEAN_WINDOW = 50 # 
@@ -102,21 +97,20 @@ elif CURRENT_SET == Set.FD004:
     MAX_DEPTH = 15  # Cap depth to prevent memorizing exact rows
     MIN_SAMPLES_LEAF = 2 # Let every leaf represent a general trend instead of a single sample
     MIN_SAMPLES_SPLIT = 10 # 
+    MAX_FEATURES = 'sqrt' # Force tree diversity
 
-    NASA_SAFETY_BUFFER = 0 # Force model to predict a bit earlier
-    RUL_LIMIT = 130
-
-MAX_FEATURES = 'sqrt' # Force tree diversity
+NASA_SAFETY_BUFFER = 0 # Force model to predict a bit earlier
+RUL_LIMIT = 130
 
 RANDOM_STATE = 42
 PARAM_GRID = {
-'n_estimators': range(180, 220, 10),
-'max_depth': range(8, 12, 1),
-'min_samples_leaf': range(5, 10, 1),
-'min_samples_split': range(5, 10, 1),
-'max_features': ['sqrt'],
-'random_state': [RANDOM_STATE],
-'n_jobs': [-1]
+    'n_estimators': [390],
+    'max_depth': [18],
+    'min_samples_leaf': [2],
+    'min_samples_split': range(2, 20, 2),
+    'max_features': ['sqrt'],
+    'random_state': [RANDOM_STATE],
+    'n_jobs': [-1]
 }
 
 
@@ -480,7 +474,8 @@ def FeatureEngineering(df_train, debug=False):
         # * Places higher weight on the most recent cycles. This helps capture the accelerating degradation curve (exponential wear) typical of turbofan engines as they approach failure.
         print("\tSmoothing sensor data to remove noise...")
         for c in sensor_columns:
-            ema_smooth = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[c].transform(lambda x: x.ewm(span=EMA_SPAN, adjust=False).mean())
+            norm = f"{c}_NORMALIZED"
+            ema_smooth = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[norm].transform(lambda x: x.ewm(span=EMA_SPAN, adjust=False).mean())
             ema_smooth.name = f"{c}_EMA_SMOOTH"
             df_train = pd.concat([df_train, ema_smooth], axis=1)
 
@@ -489,9 +484,9 @@ def FeatureEngineering(df_train, debug=False):
             for unit in sample_units:
                 unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
                 plt.plot(unit_data[RUL_COLUMN], 
-                        unit_data[f"{c}"], 
+                        unit_data[norm], 
                         label=f"Unit {unit}")
-                plt.title(f"{c} Raw Data")
+                plt.title(f"{c} Normalized Data")
 
             plt.subplot(2, 1, 2)
             for unit in sample_units:
@@ -504,7 +499,7 @@ def FeatureEngineering(df_train, debug=False):
             plt.suptitle(f'Sensor {c} vs. RUL')
             plt.legend()
             plt.grid(True, alpha=0.3)
-            plt.savefig(f"{OUTPUT_DIR}/Sensor_{c}_vs_RUL.png", 
+            plt.savefig(f"{OUTPUT_DIR}/Sensor_{c}_Smoothed_vs_RUL.png", 
                        bbox_inches='tight', dpi=DPI)
             plt.close()
 
@@ -652,20 +647,15 @@ def rul_score(y_test, y_pred):
     return abs(score)
 CMAPSS_SCORER = make_scorer(rul_score, greater_is_better=False)
 
-def HyperparameterTuning(df_train_split, df_test_split, feature_columns, debug=False):
+def HyperparameterTuning(df_train, feature_columns, debug=False):
     printHeading("Hyperparameter Tuning")
 
     ## Extract X and Y data:
-    target_col = RUL_CLIPPED_COLUMN
-    feature_cols = feature_columns
-    
     print(f"Target column: {RUL_CLIPPED_COLUMN}")
-    print(f"Feature columns: {feature_cols}")
+    print(f"Feature columns: {feature_columns}")
 
-    X_train = df_train_split[feature_cols].values
-    y_train = df_train_split[target_col].values
-    X_test = df_test_split[feature_cols].values
-    y_test = df_test_split[target_col].values
+    X = df_train[feature_columns].values
+    y = df_train[RUL_CLIPPED_COLUMN].values
 
     search = GridSearchCV(
             estimator=RandomForestRegressor(), 
@@ -673,18 +663,13 @@ def HyperparameterTuning(df_train_split, df_test_split, feature_columns, debug=F
             cv=2, 
             verbose=3,
             scoring=CMAPSS_SCORER)
-    search.fit(X_train, y_train)
+    search.fit(X, y)
 
-    test = search.score(X_test, y_test)
+    test = search.score(X, y)
 
     print("Best Parameters:", search.best_params_)
     print("Best Estimator:", search.best_estimator_)
     print("Test Score:", test)
-
-    # Best results for FD001 and FD003:
-    # Best Parameters: {'max_depth': 20, 'max_features': 'sqrt', 'min_samples_leaf': 2, 'min_samples_split': 8, 'n_estimators': 40, 'n_jobs': -1}                                             
-    # Best Estimator: RandomForestRegressor(max_depth=20, max_features='sqrt', min_samples_leaf=2,                      min_samples_split=8, n_estimators=40, n_jobs=-1)
-    # Manual tuning yields better results.
 
     return
 
@@ -772,7 +757,7 @@ df_train, feature_columns, sample_units = FeatureEngineering(df_train)
 df_train_split, df_test_split = TrainTestSplit(df_train)
 
 if TUNE:
-    HyperparameterTuning(df_train_split, df_test_split, feature_columns)
+    HyperparameterTuning(df_train, feature_columns)
 else:
     model, feature_cols, X_test, y_test, X_train, y_train = RandomForestModel(df_train_split, df_test_split, feature_columns)
     EvaluateModel(df_train_split, model, X_train, y_train, feature_cols, "Training Split")
