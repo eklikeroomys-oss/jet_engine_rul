@@ -125,9 +125,9 @@ training_files = {
 
 OUTPUT_DIR = Path(f"output/{CURRENT_SET.name}")
 
-RUL_DIR = Path(f"{OUTPUT_DIR}/RUL")
-CONDITION_DIR = Path(f"{OUTPUT_DIR}/Conditions")
-SENSORS_DIR = Path(f"{OUTPUT_DIR}/Sensors")
+RUL_DIR = Path(f"{OUTPUT_DIR}/1_RUL")
+CONDITION_DIR = Path(f"{OUTPUT_DIR}/2_Conditions")
+SENSORS_DIR = Path(f"{OUTPUT_DIR}/3_Sensors")
 RESULTS_DIR = Path(f"{OUTPUT_DIR}/Results")
 
 RUL_DIR.mkdir(parents=True, exist_ok=True)
@@ -434,7 +434,7 @@ def FeatureEngineering(df_train, debug=False):
         
         return df_train, feature_columns
 
-    def NormalizePerCondition(df_train, sample_units):
+    def NormalizePerCondition(df_train):
         print("\nNormalizing data per condition...")
 
         sensor_columns = [COLUMN_NAMES[col] for col in Column if Column.T2.value <= col.value <= Column.W32.value]
@@ -444,32 +444,6 @@ def FeatureEngineering(df_train, debug=False):
             lambda x: scaler.fit_transform(x.to_frame()).flatten())
         sensors_normalized = sensors_normalized.add_suffix("_NORMALIZED")
         df_train = pd.concat([df_train, sensors_normalized], axis=1)
-
-        print("\nPrinting normalized sensor data...")
-        for c in sensor_columns:
-            plt.figure(figsize=(20, 20))
-            plt.subplot(2, 1, 1)
-            for unit in sample_units:
-                unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit]
-                plt.plot(unit_data[RUL_COLUMN], 
-                        unit_data[f"{c}"], 
-                        label=f"Unit {unit}")
-                plt.title(f"{c} Raw Data")
-
-            plt.subplot(2, 1, 2)
-            for unit in sample_units:
-                unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit]
-                plt.plot(unit_data[RUL_COLUMN], 
-                        unit_data[f"{c}_NORMALIZED"], 
-                        label=f"Unit {unit}")
-                plt.title(f"{c} Normalized Data")
-                    
-            plt.suptitle(f'Sensor {c} Normalized vs. RUL')
-            plt.legend()
-            plt.grid(True, alpha=0.3)
-            plt.savefig(f"{SENSORS_DIR}/Sensor_{c}_Normalized_vs_RUL.png", 
-                       bbox_inches='tight', dpi=DPI)
-            plt.close()
         
         return df_train
 
@@ -488,30 +462,6 @@ def FeatureEngineering(df_train, debug=False):
             ema_smooth = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[norm].transform(lambda x: x.ewm(span=EMA_SPAN, adjust=False).mean())
             ema_smooth.name = f"{c}_EMA_SMOOTH"
             df_train = pd.concat([df_train, ema_smooth], axis=1)
-
-            plt.figure(figsize=(20, 20))
-            plt.subplot(2, 1, 1)
-            for unit in sample_units:
-                unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
-                plt.plot(unit_data[RUL_COLUMN], 
-                        unit_data[norm], 
-                        label=f"Unit {unit}")
-                plt.title(f"{c} Normalized Data")
-
-            plt.subplot(2, 1, 2)
-            for unit in sample_units:
-                unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
-                plt.plot(unit_data[RUL_COLUMN], 
-                        unit_data[f"{c}_EMA_SMOOTH"], 
-                        label=f"Unit {unit}")
-                plt.title(f"{c} Smoothed Data")
-                    
-            plt.suptitle(f'Sensor {c} vs. RUL')
-            plt.legend()
-            plt.grid(True, alpha=0.3)
-            plt.savefig(f"{SENSORS_DIR}/Sensor_{c}_Smoothed_vs_RUL.png", 
-                       bbox_inches='tight', dpi=DPI)
-            plt.close()
 
         if debug:
             print(df_train)
@@ -541,23 +491,6 @@ def FeatureEngineering(df_train, debug=False):
         # Without these, Random Forest will perform quite poorly. With them, it becomes much 
         # smarter at detecting when an engine is starting to fail.
 
-        # Calculate slope:
-        def analytical_slope(y):
-            n = len(y)
-            x = np.arange(n)
-
-            x_mean = (n - 1) / 2.0
-            y_mean = np.mean(y)
-
-            # Sum of products minus correction factor
-            covariance = np.sum(x * y) - n * x_mean * y_mean
-            variance = (n * (n**2 - 1)) / 12.0  # Analytical variance of arange(n)
-
-            if variance == 0:
-                return 0.0
-
-            return covariance / variance
-
         print("\tCalculating rolling features...")
         for c in sensor_columns:
             smoothed = f"{c}_EMA_SMOOTH"
@@ -569,30 +502,6 @@ def FeatureEngineering(df_train, debug=False):
 
             df_train = pd.concat([df_train, roll_mean], axis=1)
             df_train = pd.concat([df_train, roll_std], axis=1)
-
-
-        # Plot rolling sensor data for a few units:
-        print("\tPlotting rolling features...")
-        for s in sensor_columns:
-            smoothed = f"{s}_EMA_SMOOTH"
-            plt.figure(figsize=(20, 20))
-            rolling_postfixes = ["", "_ROLL_MEAN", "_ROLL_STD"]
-            for j in range(len(rolling_postfixes)):
-                plt.subplot(2, 2, j+1)
-                for unit in sample_units:
-                    unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
-                    plt.plot(unit_data[RUL_COLUMN], 
-                            unit_data[f"{smoothed}{rolling_postfixes[j]}"], 
-                            label=f"Unit {unit}")
-                    plt.title(f"{smoothed}{rolling_postfixes[j]}")
-                    
-            plt.suptitle(f'Rolling Sensor {smoothed} vs. RUL')
-            plt.legend()
-            plt.grid(True, alpha=0.3)
-            plt.savefig(f"{SENSORS_DIR}/Rolling_Sensor_{smoothed}_vs_Time.png", 
-                       bbox_inches='tight', dpi=DPI)
-            plt.close()
-
 
         # Map sensors relevant to data sets:
         feature_column_map = {
@@ -630,14 +539,46 @@ def FeatureEngineering(df_train, debug=False):
 
         return df_train, feature_columns
 
+    def PlotSensorData(df_train, sensor_columns, sample_units):
+        print("\nPlotting sensor data...")
+        for c in sensor_columns:
+            plt.figure(figsize=(20, 20))
+
+            def PopulateSensorSubPlot(plotRows, plotCols, plotIndex, dfSensor, dfSuffix):
+                plt.subplot(plotRows, plotCols, plotIndex)
+                for unit in sample_units:
+                    unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit]
+
+                    plt.plot(unit_data[RUL_COLUMN], 
+                            unit_data[f"{dfSensor}{dfSuffix}"], 
+                            label=f"Unit {unit}")
+                    plt.title(f"{dfSensor}{dfSuffix} vs RUL")
+
+            # Raw data:
+            rows = 3
+            cols = 2
+            PopulateSensorSubPlot(rows, cols, 1, c, "")
+            PopulateSensorSubPlot(rows, cols, 2, c, "_NORMALIZED")
+            PopulateSensorSubPlot(rows, cols, 3, c, "_EMA_SMOOTH")
+            PopulateSensorSubPlot(rows, cols, 4, c, "_EMA_SMOOTH_ROLL_MEAN")
+            PopulateSensorSubPlot(rows, cols, 5, c, "_EMA_SMOOTH_ROLL_STD")
+                    
+            plt.suptitle(f'Sensor {c} vs. RUL')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.savefig(f"{SENSORS_DIR}/Sensor_{c}_vs_RUL.png", 
+                       bbox_inches='tight', dpi=DPI)
+            plt.close()
+
 
     df_train = CalculateRUL(df_train)
     df_train = ClipRUL(df_train)
     df_train, sample_units = ClusterOperationalConditions(df_train)
     df_train, feature_columns = AddConditionCycleFeatures(df_train, sample_units)
-    df_train = NormalizePerCondition(df_train, sample_units)
+    df_train = NormalizePerCondition(df_train)
     df_train, sensor_columns = SmoothSensorData(df_train, sample_units)
     df_train, feature_columns = AddRollingFeatures(df_train, sensor_columns, feature_columns, sample_units)
+    PlotSensorData(df_train, sensor_columns, sample_units)
 
     return df_train, feature_columns, sample_units
 
