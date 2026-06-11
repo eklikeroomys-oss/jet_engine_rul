@@ -24,7 +24,7 @@ class Set(Enum):
     FD003 = 3
     FD004 = 4
 
-CURRENT_SET = Set.FD004
+CURRENT_SET = Set.FD002
 #TUNE = True
 TUNE = False
 
@@ -430,16 +430,43 @@ def FeatureEngineering(df_train, debug=False):
         
         return df_train, feature_columns
 
-    def NormalizePerCondition(df_train):
+    def NormalizePerCondition(df_train, sample_units):
         print("\nNormalizing data per condition...")
 
         sensor_columns = [COLUMN_NAMES[col] for col in Column if Column.T2.value <= col.value <= Column.W32.value]
 
         scaler = StandardScaler()
-        # Apply the scaler to each group individually
-        df_train[sensor_columns] = df_train.groupby(CONDITIONS_COLUMN)[sensor_columns].transform(
+        sensors_normalized = df_train.groupby(CONDITIONS_COLUMN)[sensor_columns].transform(
             lambda x: scaler.fit_transform(x.to_frame()).flatten())
+        sensors_normalized = sensors_normalized.add_suffix("_NORMALIZED")
+        df_train = pd.concat([df_train, sensors_normalized], axis=1)
 
+        print("\nPrinting normalized sensor data...")
+        for c in sensor_columns:
+            plt.figure(figsize=(20, 20))
+            plt.subplot(2, 1, 1)
+            for unit in sample_units:
+                unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit]
+                plt.plot(unit_data[RUL_COLUMN], 
+                        unit_data[f"{c}"], 
+                        label=f"Unit {unit}")
+                plt.title(f"{c} Raw Data")
+
+            plt.subplot(2, 1, 2)
+            for unit in sample_units:
+                unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit]
+                plt.plot(unit_data[RUL_COLUMN], 
+                        unit_data[f"{c}_NORMALIZED"], 
+                        label=f"Unit {unit}")
+                plt.title(f"{c} Normalized Data")
+                    
+            plt.suptitle(f'Sensor {c} Normalized vs. RUL')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.savefig(f"{OUTPUT_DIR}/Sensor_{c}_Normalized_vs_RUL.png", 
+                       bbox_inches='tight', dpi=DPI)
+            plt.close()
+        
         return df_train
 
     def SmoothSensorData(df_train, sample_units, debug=False):
@@ -603,7 +630,7 @@ def FeatureEngineering(df_train, debug=False):
     df_train = ClipRUL(df_train)
     df_train, sample_units = ClusterOperationalConditions(df_train)
     df_train, feature_columns = AddConditionCycleFeatures(df_train, sample_units)
-    df_train = NormalizePerCondition(df_train)
+    df_train = NormalizePerCondition(df_train, sample_units)
     df_train, sensor_columns = SmoothSensorData(df_train, sample_units)
     df_train, feature_columns = AddRollingFeatures(df_train, sensor_columns, feature_columns, sample_units)
 
