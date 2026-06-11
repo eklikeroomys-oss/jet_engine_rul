@@ -128,7 +128,7 @@ OUTPUT_DIR = Path(f"output/{CURRENT_SET.name}")
 RUL_DIR = Path(f"{OUTPUT_DIR}/1_RUL")
 CONDITION_DIR = Path(f"{OUTPUT_DIR}/2_Conditions")
 SENSORS_DIR = Path(f"{OUTPUT_DIR}/3_Sensors")
-RESULTS_DIR = Path(f"{OUTPUT_DIR}/Results")
+RESULTS_DIR = Path(f"{OUTPUT_DIR}/4_Results")
 
 RUL_DIR.mkdir(parents=True, exist_ok=True)
 CONDITION_DIR.mkdir(parents=True, exist_ok=True)
@@ -624,7 +624,7 @@ def HyperparameterTuning(df_train, feature_columns, debug=False):
 
     return
 
-def RandomForestModel(df_train_split, df_test_split, feature_columns, debug=False):
+def RandomForestModel(df_train_split, feature_columns, debug=False):
     printHeading("Random Forest Model")
 
     ## Extract X and Y data:
@@ -636,9 +636,6 @@ def RandomForestModel(df_train_split, df_test_split, feature_columns, debug=Fals
 
     X_train = df_train_split[feature_cols].values
     y_train = df_train_split[target_col].values
-
-    X_test = df_test_split[feature_cols].values
-    y_test = df_test_split[target_col].values
 
     print(f"Training the random forest model...")
     model = RandomForestRegressor(
@@ -657,50 +654,65 @@ def RandomForestModel(df_train_split, df_test_split, feature_columns, debug=Fals
     print("Feature imporances:")
     print(feature_importances.sort_values(ascending=False).head(20))
 
-    return model, feature_cols, X_test, y_test, X_train, y_train
+    return model, feature_cols
 
-def EvaluateModel(df, model, X, y, feature_cols, identifier, debug=True):
+def EvaluateModel(df_train_split, df_test_split, model, feature_cols, debug=True):
     printHeading("Evaluating Random Forest Model")
-    y_pred = model.predict(X) - NASA_SAFETY_BUFFER
 
-    ## Metrics
-    rmse = np.sqrt(mean_squared_error(y, y_pred))
-    print(f"RMSE ({identifier}): {rmse:.2f}")
+    def PopulateScatterSubPlot(plotRows, plotCols, plotIndex, y, y_pred, description, rmse, nasa):
+        plt.subplot(plotRows, plotCols, plotIndex)
+        plt.scatter(y, y_pred, alpha=0.5, s=10)
+        plt.plot([y.min(), y.max()], [y.min(), y.max()], 'r--', lw=2)  # Perfect prediction line
+        plt.text(0, 125, f"RMSE={rmse:.2f}\nNASA={int(nasa)}", color='r', fontweight='bold')
+        plt.xlabel('Actual RUL (Clipped)')
+        plt.ylabel('Predicted RUL')
+        plt.title(f'Actual vs Predicted RUL ({description})')
+        plt.grid(True)
 
-    print(f"NASA Score ({identifier}): {rul_score(y, y_pred):.2f}")
+    def PopulatePredictedRULvsTime(plotRows, plotCols, plotIndex, df_train, sample_units, description):
+        plt.subplot(plotRows, plotCols, plotIndex)
+        for unit in sample_units:
+            unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit]
+            actual = unit_data[RUL_CLIPPED_COLUMN]
+            pred = model.predict(unit_data[feature_cols].values) - NASA_SAFETY_BUFFER
+
+            plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], actual, label=f'Unit {unit} - Actual', linestyle='-')#, marker='o')
+            plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], pred, label=f'Unit {unit} - Predicted', linestyle='--')
+            plt.xlabel('Time (Cycles)')
+            plt.ylabel('RUL')
+            plt.title(f'RUL Prediction over Time ({description})')
+            plt.legend()
+            plt.grid(True)
 
     # Scatter plot
-    plt.figure(figsize=(10, 6))
-    plt.scatter(y, y_pred, alpha=0.5, s=10)
-    plt.plot([y.min(), y.max()], [y.min(), y.max()], 'r--', lw=2)  # Perfect prediction line
+    plt.figure(figsize=(20, 20))
+    rows = 2
+    cols = 2
+    i = 0
 
-    plt.xlabel('Actual RUL (Clipped)')
-    plt.ylabel('Predicted RUL')
-    plt.title(f'Actual vs Predicted RUL ({identifier})')
-    plt.grid(True)
-    plt.savefig(f"{RESULTS_DIR}/Predicted_vs_Actual_RUL_{identifier.replace(" ", "_")}.png", 
+    for case in [(df_train_split, "TRAIN SPLIT"), (df_test_split, "TEST SPLIT")]:
+        df = case[0]
+        description = case[1]
+
+        X = df[feature_cols].values
+        y = df[RUL_CLIPPED_COLUMN].values
+        y_pred = model.predict(X) - NASA_SAFETY_BUFFER
+
+        ## Metrics
+        rmse = np.sqrt(mean_squared_error(y, y_pred))
+        print(f"RMSE ({description}): {rmse:.2f}")
+        nasa = rul_score(y, y_pred)
+        print(f"NASA Score ({description}): {nasa:.2f}")
+
+        sample_units = random.sample(list(df[COLUMN_NAMES[Column.UnitNumber]].unique()), 5)
+        PopulateScatterSubPlot(rows, cols, i+1, y, y_pred, description, rmse, nasa)
+        PopulatePredictedRULvsTime(rows, cols, i+2, df, sample_units, description)
+        i = i + cols
+
+    plt.savefig(f"{RESULTS_DIR}/Evaluation_Results.png", 
                bbox_inches='tight', dpi=DPI)
     plt.close()
 
-    plt.figure(figsize=(12, 8))
-    sample_units = random.sample(list(df[COLUMN_NAMES[Column.UnitNumber]].unique()), 5)
-    for unit in sample_units:
-        unit_data = df[df[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
-
-        actual = unit_data[RUL_CLIPPED_COLUMN]
-        pred = model.predict(unit_data[feature_cols].values) - NASA_SAFETY_BUFFER
-
-        plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], actual, label=f'Unit {unit} - Actual', linestyle='-', marker='o')
-        plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], pred, label=f'Unit {unit} - Predicted', linestyle='--')
-
-    plt.xlabel('Cycle')
-    plt.ylabel('RUL')
-    plt.title('RUL Prediction over Cycles for Sample Engines')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(f"{RESULTS_DIR}/Sample_Engine_Predictions_{identifier.replace(" ", "_")}.png", 
-               bbox_inches='tight', dpi=DPI)
-    plt.close()
 
 df_train = LoadData()
 df_train = PrepareData(df_train)
@@ -710,6 +722,5 @@ df_train_split, df_test_split = TrainTestSplit(df_train)
 if TUNE:
     HyperparameterTuning(df_train, feature_columns)
 else:
-    model, feature_cols, X_test, y_test, X_train, y_train = RandomForestModel(df_train_split, df_test_split, feature_columns)
-    EvaluateModel(df_train_split, model, X_train, y_train, feature_cols, "Training Split")
-    EvaluateModel(df_test_split, model, X_test, y_test, feature_cols, "Testing Split")
+    model, feature_cols = RandomForestModel(df_train_split, feature_columns)
+    EvaluateModel(df_train_split, df_test_split, model, feature_cols)
