@@ -102,7 +102,7 @@ elif CURRENT_SET == Set.FD004:
     pass
 
 NASA_SAFETY_BUFFER = 0 # Force model to predict a bit earlier
-RUL_LIMIT = 130
+RUL_LIMIT = 140
 
 RANDOM_STATE = 42
 PARAM_GRID = {
@@ -121,6 +121,20 @@ training_files = {
         Set.FD002: "../Data/train_FD002.txt",
         Set.FD003: "../Data/train_FD003.txt",
         Set.FD004: "../Data/train_FD004.txt",
+        }
+
+testing_input_files = {
+        Set.FD001: "../Data/test_FD001.txt",
+        Set.FD002: "../Data/test_FD002.txt",
+        Set.FD003: "../Data/test_FD003.txt",
+        Set.FD004: "../Data/test_FD004.txt",
+        }
+
+testing_RUL_files = {
+        Set.FD001: "../Data/RUL_FD001.txt",
+        Set.FD002: "../Data/RUL_FD002.txt",
+        Set.FD003: "../Data/RUL_FD003.txt",
+        Set.FD004: "../Data/RUL_FD004.txt",
         }
 
 OUTPUT_DIR = Path(f"output/{CURRENT_SET.name}")
@@ -225,24 +239,36 @@ SAMPLE_UNITS = 25
 TEST_SIZE = 0.3 # Train/test split size
 
 DPI=100
+HEAD_COUNT = 5
 
-def printHeading(heading):
+def TrainTestDescription(training: bool):
+    return "Training Data" if training else "Testing Data"
+
+def printHeading(heading, training: bool):
     c = "#"
-    length = len(heading)
+    heading_complete = f"{heading} ({TrainTestDescription(training)})"
+    length = len(heading_complete)
     print(f"\n{c * (length + 4)}")
-    print(f"{c} {heading} {c}")
+    print(f"{c} {heading_complete} {c}")
     print(f"{c * (length + 4)}")
 
-def LoadData(debug=False):
-    printHeading("Data Gathering")
-    head_count = 5
-    print(f"Loading training file {CURRENT_SET.name}...")
-    df_train = pd.read_csv(training_files[CURRENT_SET], sep=' ', header=None)
-    if debug: 
-        print(df_train.head(head_count))
-        print(df_train.describe())
+def printBusy(msg, training: bool):
+    msg_complete = f"{msg} ({TrainTestDescription(training)})..."
+    print(f"{msg_complete}")
 
-    return df_train
+def plotTitle(title, training: bool):
+    return f"{TrainTestDescription(training)} {title}"
+
+def LoadData(training: bool, debug=False):
+    printHeading("Data Gathering", training)
+    printBusy(f"Loading data files for {CURRENT_SET.name}", training)
+    df = pd.read_csv(training_files[CURRENT_SET] if training else testing_input_files[CURRENT_SET], sep=' ', header=None)
+
+    if debug: 
+        print(df.head(HEAD_COUNT))
+        print(df.describe())
+
+    return df
 
 def PlotHistogram(data, bins, dir, title, xlabel, ylabel):
     plt.hist(data, bins=bins)
@@ -252,15 +278,15 @@ def PlotHistogram(data, bins, dir, title, xlabel, ylabel):
     plt.savefig(f"{dir}/{title.replace(" ", "_")}.png", bbox_inches='tight', dpi=DPI)
     plt.close()
 
-def PrepareData(df_train, debug=False):
-    printHeading("Data Preparation")
-    print("Removing null data...")
+def PrepareData(df, training: bool, debug=False):
+    printHeading(f"Data Preparation", training)
+    printBusy("Removing null data", training)
     # The data has columns 26 and 27 which should not be present. 
     # Inspecting these columns, it looks like they are the result of trailing spaces in the data.
     # We can drop columns 26 and 27 from the data sets.
-    df_train = df_train.iloc[:, :26]
+    df = df.iloc[:, :26]
 
-    print("Adding column names to dataset...")
+    printBusy("Adding column names to dataset", training)
     # The first two column names are specified in the readme.txt file attached
     # to the CMAPSS data: Unit Number and Time in Cycles.
 
@@ -275,20 +301,20 @@ def PrepareData(df_train, debug=False):
 
     # For now we will assume that the sensor data is given in the same order as the 
     # specified in "Damage Propagation Modelling".
-    df_train.columns = list(COLUMN_NAMES.values())
-    print(list(df_train.columns))
+    df.columns = list(COLUMN_NAMES.values())
+    print(list(df.columns))
 
-    print("Sorting data by unit number and time (cycles)...")
+    printBusy("Sorting data by unit number and time (cycles)", training)
     # Ensure data is sorted
-    df_train = df_train.sort_values([COLUMN_NAMES[Column.UnitNumber], 
+    df = df.sort_values([COLUMN_NAMES[Column.UnitNumber], 
                                    COLUMN_NAMES[Column.TimeCycles]]).reset_index(drop=True)
     if debug:
-        print(df_train)
-        print(df_train.describe())
-    return df_train
+        print(df)
+        print(df.describe())
+    return df
 
-def FeatureEngineering(df_train, debug=False):
-    printHeading("Feature Engineering")
+def FeatureEngineering(df, training: bool, debug=False):
+    printHeading("Feature Engineering", training)
 
     def CalculateRUL(df_train, debug=False):
         print("Calculating the RUL for each Unit...")
@@ -321,33 +347,33 @@ def FeatureEngineering(df_train, debug=False):
 
         return df_train
 
-    def ClusterOperationalConditions(df_train, debug=False):
-        print("\nClustering the operational conditions...")
-        df_operational_params = df_train[OPERATIONAL_PARAMS].copy()
+    def ClusterOperationalConditions(df, debug=False):
+        printBusy("\nClustering operational conditions", training)
+        df_operational_params = df[OPERATIONAL_PARAMS].copy()
 
-        print("\tScaling condition data before KMeans fit")
+        printBusy("\tScaling condition data before KMeans fit", training)
         operational_params_scaler = StandardScaler()
         df_operational_params_scaled = operational_params_scaler.fit_transform(df_operational_params)
 
-        print("\tPerforming KMeans fit")
+        printBusy("\tPerforming KMeans fit", training)
         km = KMeans(n_clusters=NUM_OPERATIONAL_CONDITIONS[CURRENT_SET])
-        df_train[CONDITIONS_COLUMN] = km.fit_predict(df_operational_params_scaled)
-        print("\t\tCluster centers :")
+        df[CONDITIONS_COLUMN] = km.fit_predict(df_operational_params_scaled)
+        printBusy(f"\t\tCluster centers", training)
         operational_condition_centers = operational_params_scaler.inverse_transform(km.cluster_centers_)
         for i in range(NUM_OPERATIONAL_CONDITIONS[CURRENT_SET]):
             print(f"\t\tCondition {i+1}: {OPERATIONAL_PARAMS[0]} = {int(operational_condition_centers[i][0] * 1000)}Ft, \
                     {OPERATIONAL_PARAMS[1]} = {round(operational_condition_centers[i][1], 2)}, {OPERATIONAL_PARAMS[2]} = {round(operational_condition_centers[i][2], 2)}")
 
         if NUM_OPERATIONAL_CONDITIONS[CURRENT_SET] > 1:
-            print("\tCalculating operating condition clusters silhouette score...")
-            print(f"\t\tResult: {silhouette_score(df_operational_params_scaled, df_train[CONDITIONS_COLUMN], metric="euclidean", sample_size=SILHOUETTE_SCORE_SAMPLE_SIZE, random_state=RANDOM_STATE)}")
+            printBusy(f"\tCalculating operating condition clusters silhouette score...", training)
+            print(f"\t\tResult: {silhouette_score(df_operational_params_scaled, df[CONDITIONS_COLUMN], metric="euclidean", sample_size=SILHOUETTE_SCORE_SAMPLE_SIZE, random_state=RANDOM_STATE)}")
 
-        print("\tPlotting clusters...")
+        printBusy("\tPlotting clusters...", training)
         operational_conditions_fig = plt.figure(figsize=(10,8))
         ax = operational_conditions_fig.add_subplot(111, projection='3d')
         operational_conditions_colors = ['#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00', '#ffff33']
         for cluster in range(NUM_OPERATIONAL_CONDITIONS[CURRENT_SET]):
-            cluster_data = df_train[df_train[CONDITIONS_COLUMN] == cluster]
+            cluster_data = df[df[CONDITIONS_COLUMN] == cluster]
 
             ax.scatter(
                     cluster_data[COLUMN_NAMES[Column.Altitude]],
@@ -361,60 +387,62 @@ def FeatureEngineering(df_train, debug=False):
         ax.set_xlabel(f"{COLUMN_NAMES[Column.Altitude]} (x1000 ft)")
         ax.set_ylabel(COLUMN_NAMES[Column.MachNumber])
         ax.set_zlabel(COLUMN_NAMES[Column.TRA])
-        ax.set_title("Operational Condition Clusters")
+        title = plotTitle("Operational Condition Clusters", training)
+        ax.set_title(title)
         ax.legend()
-        plt.savefig(f"{CONDITION_DIR}/Operational_Condition_Clusters.png", bbox_inches='tight', dpi=DPI)
+        plt.savefig(f"{CONDITION_DIR}/{title.replace(" ", "_")}.png", bbox_inches='tight', dpi=DPI)
         plt.close()
 
-        print("\tPlotting operational condition over cycles for a few sample engines...")
-        sample_units = random.sample(list(df_train[COLUMN_NAMES[Column.UnitNumber]].unique()), SAMPLE_UNITS)
+        printBusy("\tPlotting operational condition vs time", training)
+        sample_units = random.sample(list(df[COLUMN_NAMES[Column.UnitNumber]].unique()), SAMPLE_UNITS)
         plt.figure(figsize=(12, 8))
         for unit in sample_units:
-            unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
+            unit_data = df[df[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
             plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], 
                      unit_data[CONDITIONS_COLUMN], 
                      label=f'Unit {unit}')
 
-        plt.xlabel('Cycle')
+        plt.xlabel('Time')
         plt.ylabel('Operational Condition')
-        plt.title('Operational Condition vs Time')
+        title = plotTitle("Operational Conditions vs Time", training)
+        plt.title(title)
         plt.legend()
         plt.grid(True, alpha=0.3)
-        plt.savefig(f"{CONDITION_DIR}/Operational_Condition_vs_Time.png", bbox_inches='tight', dpi=DPI)
+        plt.savefig(f"{CONDITION_DIR}/{title.replace(" ", "_")}.png", bbox_inches='tight', dpi=DPI)
         plt.close()
         # From the graph above it is clear that each engine operates at many different operating conditions, not just one.
         # We should try to calculate an average of all previous conditions at each time step for the final result.
 
         if debug:
-            print(df_train)
+            print(df)
 
-        return df_train, sample_units
+        return df, sample_units
 
-    def AddConditionCycleFeatures(df_train, sample_units, debug=False):
-        print("\nAdding cumulative cycles per operational condition...")
+    def AddConditionCycleFeatures(df, sample_units, debug=False):
+        printBusy("\nAdding cumulative cycles per operational condition", training)
         
         # 2. Cumulative cycles for EACH of the 6 conditions
         for cond in range(NUM_OPERATIONAL_CONDITIONS[CURRENT_SET]):
             # Create indicator (1 if in this condition, 0 otherwise)
-            df_train[f"TOTAL_COND_{cond}"] = (df_train[CONDITIONS_COLUMN] == cond).astype(int)
+            df[f"TOTAL_COND_{cond}"] = (df[CONDITIONS_COLUMN] == cond).astype(int)
             # Cumulative sum per engine
-            df_train[f"TOTAL_COND_{cond}"] = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[f"TOTAL_COND_{cond}"].cumsum()
+            df[f"TOTAL_COND_{cond}"] = df.groupby(COLUMN_NAMES[Column.UnitNumber])[f"TOTAL_COND_{cond}"].cumsum()
         
         if debug:
             cols_to_show = [COLUMN_NAMES[Column.UnitNumber], CONDITIONS_COLUMN, 
                            'Cumul_Cycles_Current_Cond'] + \
                           [f'Cumul_Cycles_Cond_{i}' for i in range(NUM_OPERATIONAL_CONDITIONS[CURRENT_SET])]
-            print(df_train[cols_to_show].head(15))
+            print(df[cols_to_show].head(15))
         
-        print("\tPlotting cumulative cycles per condition for sample engines...")
+        printBusy("\tPlotting cumulative cycles per condition for sample engines", training)
         
         unit = sample_units[0]
-        unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
+        unit_data = df[df[COLUMN_NAMES[Column.UnitNumber]] == unit].copy()
         
         plt.figure(figsize=(12, 6))
         
         # Plot cumulative cycles for each condition
-        total_cond_columns = [col for col in df_train.columns if col.startswith("TOTAL_COND_")]
+        total_cond_columns = [col for col in df.columns if col.startswith("TOTAL_COND_")]
         for col in total_cond_columns:
             plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], 
                     unit_data[col], 
@@ -422,33 +450,34 @@ def FeatureEngineering(df_train, debug=False):
         
         plt.xlabel('Cycle')
         plt.ylabel('Cumulative Cycles')
-        plt.title(f'Cumulative Condition Cycles - Unit {unit}')
+        title = plotTitle(f'Cumulative Condition Cycles - Unit {unit}', training)
+        plt.title(title)
         plt.legend()
         plt.grid(True, alpha=0.3)
-        plt.savefig(f"{CONDITION_DIR}/Cumulative_Condition_Cycles.png", 
+        plt.savefig(f"{CONDITION_DIR}/{title.replace(" ", "_")}.png", 
                    bbox_inches='tight', dpi=DPI)
         plt.close()
 
         # Add condition columns to features:
         feature_columns = [CONDITIONS_COLUMN] + total_cond_columns
         
-        return df_train, feature_columns
+        return df, feature_columns
 
-    def NormalizePerCondition(df_train):
-        print("\nNormalizing data per condition...")
+    def NormalizePerCondition(df):
+        printBusy("\nNormalizing data per condition", training)
 
         sensor_columns = [COLUMN_NAMES[col] for col in Column if Column.T2.value <= col.value <= Column.W32.value]
 
         scaler = StandardScaler()
-        sensors_normalized = df_train.groupby(CONDITIONS_COLUMN)[sensor_columns].transform(
+        sensors_normalized = df.groupby(CONDITIONS_COLUMN)[sensor_columns].transform(
             lambda x: scaler.fit_transform(x.to_frame()).flatten())
         sensors_normalized = sensors_normalized.add_suffix("_NORMALIZED")
-        df_train = pd.concat([df_train, sensors_normalized], axis=1)
+        df = pd.concat([df, sensors_normalized], axis=1)
         
-        return df_train
+        return df
 
-    def SmoothSensorData(df_train, sample_units, debug=False):
-        print("\nSmoothing and plotting sensor data...")
+    def SmoothSensorData(df, debug=False):
+        printBusy("\nSmoothing sensor data", training)
 
         sensor_columns = [COLUMN_NAMES[col] for col in Column if Column.T2.value <= col.value <= Column.W32.value]
 
@@ -456,21 +485,20 @@ def FeatureEngineering(df_train, debug=False):
         # Exponential Moving Average (EMA)
         # * EMA calculates the average sequentially using current and past cycles. Future values are unknown as in real workd prediction.
         # * Places higher weight on the most recent cycles. This helps capture the accelerating degradation curve (exponential wear) typical of turbofan engines as they approach failure.
-        print("\tSmoothing sensor data to remove noise...")
         for c in sensor_columns:
             norm = f"{c}_NORMALIZED"
-            ema_smooth = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[norm].transform(lambda x: x.ewm(span=EMA_SPAN, adjust=False).mean())
+            ema_smooth = df.groupby(COLUMN_NAMES[Column.UnitNumber])[norm].transform(lambda x: x.ewm(span=EMA_SPAN, adjust=False).mean())
             ema_smooth.name = f"{c}_EMA_SMOOTH"
-            df_train = pd.concat([df_train, ema_smooth], axis=1)
+            df = pd.concat([df, ema_smooth], axis=1)
 
         if debug:
-            print(df_train)
-            print(df_train.describe())
+            print(df)
+            print(df.describe())
 
-        return df_train, sensor_columns
+        return df, sensor_columns
 
-    def AddRollingFeatures(df_train, sensor_columns, feature_columns, sample_units, debug=False):
-        print("\nCreating rolling features...")
+    def AddRollingFeatures(df, sensor_columns, feature_columns, debug=False):
+        printBusy("\nCreating rolling features", training)
         # Random Forest does not understand time or sequences by itself.
         # It looks at one row at a time and makes a prediction based only on the numbers in that row.
         #
@@ -491,17 +519,16 @@ def FeatureEngineering(df_train, debug=False):
         # Without these, Random Forest will perform quite poorly. With them, it becomes much 
         # smarter at detecting when an engine is starting to fail.
 
-        print("\tCalculating rolling features...")
         for c in sensor_columns:
             smoothed = f"{c}_EMA_SMOOTH"
-            roll_mean = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[smoothed].transform(lambda x: x.rolling(window=MEAN_WINDOW, min_periods=1).mean())
-            roll_std = df_train.groupby(COLUMN_NAMES[Column.UnitNumber])[smoothed].transform(lambda x: x.rolling(window=STD_WINDOW, min_periods=1).std())
+            roll_mean = df.groupby(COLUMN_NAMES[Column.UnitNumber])[smoothed].transform(lambda x: x.rolling(window=MEAN_WINDOW, min_periods=1).mean())
+            roll_std = df.groupby(COLUMN_NAMES[Column.UnitNumber])[smoothed].transform(lambda x: x.rolling(window=STD_WINDOW, min_periods=1).std())
 
             roll_mean.name = f"{smoothed}_ROLL_MEAN"
             roll_std.name = f"{smoothed}_ROLL_STD"
 
-            df_train = pd.concat([df_train, roll_mean], axis=1)
-            df_train = pd.concat([df_train, roll_std], axis=1)
+            df = pd.concat([df, roll_mean], axis=1)
+            df = pd.concat([df, roll_std], axis=1)
 
         # Map sensors relevant to data sets:
         feature_column_map = {
@@ -537,19 +564,19 @@ def FeatureEngineering(df_train, debug=False):
                     f"{k.name}_EMA_SMOOTH_ROLL_STD",
                     ])
 
-        return df_train, feature_columns
+        return df, feature_columns
 
-    def PlotSensorData(df_train, sensor_columns, sample_units):
-        print("\nPlotting sensor data...")
+    def PlotSensorData(df, sensor_columns, sample_units):
+        printBusy("\nPlotting sensor data", training)
         for c in sensor_columns:
             plt.figure(figsize=(20, 20))
 
             def PopulateSensorSubPlot(plotRows, plotCols, plotIndex, dfSensor, dfSuffix):
                 plt.subplot(plotRows, plotCols, plotIndex)
                 for unit in sample_units:
-                    unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit]
+                    unit_data = df[df[COLUMN_NAMES[Column.UnitNumber]] == unit]
 
-                    plt.plot(unit_data[RUL_COLUMN], 
+                    plt.plot(unit_data[RUL_COLUMN if training else COLUMN_NAMES[Column.TimeCycles]], 
                             unit_data[f"{dfSensor}{dfSuffix}"], 
                             label=f"Unit {unit}")
                     plt.title(f"{dfSensor}{dfSuffix} vs RUL")
@@ -563,27 +590,31 @@ def FeatureEngineering(df_train, debug=False):
             PopulateSensorSubPlot(rows, cols, 4, c, "_EMA_SMOOTH_ROLL_MEAN")
             PopulateSensorSubPlot(rows, cols, 5, c, "_EMA_SMOOTH_ROLL_STD")
                     
-            plt.suptitle(f'Sensor {c} vs. RUL')
+            title = plotTitle(f'Sensor {c} vs. RUL', training)
+            plt.suptitle(title)
             plt.legend()
             plt.grid(True, alpha=0.3)
-            plt.savefig(f"{SENSORS_DIR}/Sensor_{c}_vs_RUL.png", 
+            plt.savefig(f"{SENSORS_DIR}/{title.replace(" ", "_")}.png", 
                        bbox_inches='tight', dpi=DPI)
             plt.close()
 
 
-    df_train = CalculateRUL(df_train)
-    df_train = ClipRUL(df_train)
-    df_train, sample_units = ClusterOperationalConditions(df_train)
-    df_train, feature_columns = AddConditionCycleFeatures(df_train, sample_units)
-    df_train = NormalizePerCondition(df_train)
-    df_train, sensor_columns = SmoothSensorData(df_train, sample_units)
-    df_train, feature_columns = AddRollingFeatures(df_train, sensor_columns, feature_columns, sample_units)
-    PlotSensorData(df_train, sensor_columns, sample_units)
+    if training:
+        # RUL cannot be calculated for testing sets as we don't know when they fail.
+        df = CalculateRUL(df)
+        df = ClipRUL(df)
 
-    return df_train, feature_columns, sample_units
+    df, sample_units = ClusterOperationalConditions(df)
+    df, feature_columns = AddConditionCycleFeatures(df, sample_units)
+    df = NormalizePerCondition(df)
+    df, sensor_columns = SmoothSensorData(df)
+    df, feature_columns = AddRollingFeatures(df, sensor_columns, feature_columns)
+    PlotSensorData(df, sensor_columns, sample_units)
+
+    return df, feature_columns
 
 def TrainTestSplit(df_train, debug=False):
-    printHeading("Train/Test Split")
+    printHeading("Train/Test Split", training=False)
     unique_units = df_train[COLUMN_NAMES[Column.UnitNumber]].unique()
     train_units, test_units = train_test_split(unique_units, test_size=TEST_SIZE, random_state=RANDOM_STATE)
     df_train_split = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]].isin(train_units)].copy()
@@ -599,7 +630,7 @@ def rul_score(y_test, y_pred):
 CMAPSS_SCORER = make_scorer(rul_score, greater_is_better=False)
 
 def HyperparameterTuning(df_train, feature_columns, debug=False):
-    printHeading("Hyperparameter Tuning")
+    printHeading("Hyperparameter Tuning", training=True)
 
     ## Extract X and Y data:
     print(f"Target column: {RUL_CLIPPED_COLUMN}")
@@ -625,7 +656,7 @@ def HyperparameterTuning(df_train, feature_columns, debug=False):
     return
 
 def RandomForestModel(df_train_split, feature_columns, debug=False):
-    printHeading("Random Forest Model")
+    printHeading("Random Forest Model", training=True)
 
     ## Extract X and Y data:
     target_col = RUL_CLIPPED_COLUMN
@@ -656,27 +687,29 @@ def RandomForestModel(df_train_split, feature_columns, debug=False):
 
     return model, feature_cols
 
-def EvaluateModel(df_train_split, df_test_split, model, feature_cols, debug=True):
-    printHeading("Evaluating Random Forest Model")
+def EvaluateModel(df_train_split, df_test_split, df_test, model, feature_cols, debug=True):
+    print("Evaluating Random Forest Model")
 
     def PopulateScatterSubPlot(plotRows, plotCols, plotIndex, y, y_pred, description, rmse, nasa):
         plt.subplot(plotRows, plotCols, plotIndex)
         plt.scatter(y, y_pred, alpha=0.5, s=10)
-        plt.plot([y.min(), y.max()], [y.min(), y.max()], 'r--', lw=2)  # Perfect prediction line
+        plt.plot([y.min(), y.max()], [y.min(), y.max()], 'r--', lw=2) # Perfect prediction line
         plt.text(0, 125, f"RMSE={rmse:.2f}\nNASA={int(nasa)}", color='r', fontweight='bold')
-        plt.xlabel('Actual RUL (Clipped)')
+        plt.xlabel(f"Actual RUL (Clipped @ {RUL_LIMIT})")
         plt.ylabel('Predicted RUL')
         plt.title(f'Actual vs Predicted RUL ({description})')
         plt.grid(True)
 
-    def PopulatePredictedRULvsTime(plotRows, plotCols, plotIndex, df_train, sample_units, description):
+    def PopulatePredictedRULvsTime(plotRows, plotCols, plotIndex, df, sample_units, actual_avail: bool, description):
         plt.subplot(plotRows, plotCols, plotIndex)
         for unit in sample_units:
-            unit_data = df_train[df_train[COLUMN_NAMES[Column.UnitNumber]] == unit]
-            actual = unit_data[RUL_CLIPPED_COLUMN]
-            pred = model.predict(unit_data[feature_cols].values) - NASA_SAFETY_BUFFER
+            unit_data = df[df[COLUMN_NAMES[Column.UnitNumber]] == unit]
 
-            plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], actual, label=f'Unit {unit} - Actual', linestyle='-')#, marker='o')
+            if actual_avail:
+                actual = unit_data[RUL_CLIPPED_COLUMN]
+                plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], actual, label=f'Unit {unit} - Actual', linestyle='-')#, marker='o')
+
+            pred = model.predict(unit_data[feature_cols].values) - NASA_SAFETY_BUFFER
             plt.plot(unit_data[COLUMN_NAMES[Column.TimeCycles]], pred, label=f'Unit {unit} - Predicted', linestyle='--')
             plt.xlabel('Time (Cycles)')
             plt.ylabel('RUL')
@@ -686,41 +719,62 @@ def EvaluateModel(df_train_split, df_test_split, model, feature_cols, debug=True
 
     # Scatter plot
     plt.figure(figsize=(20, 20))
-    rows = 2
+    rows = 3
     cols = 2
-    i = 0
+    i = 1
 
-    for case in [(df_train_split, "TRAIN SPLIT"), (df_test_split, "TEST SPLIT")]:
+    for case in [(df_train_split, f"TRAIN SPLIT {CURRENT_SET}", True), (df_test_split, f"TEST SPLIT {CURRENT_SET}", True), (df_test, f"NASA TEST DATA {CURRENT_SET}", False)]:
         df = case[0]
         description = case[1]
+        rul_avail = case[2]
 
         X = df[feature_cols].values
-        y = df[RUL_CLIPPED_COLUMN].values
         y_pred = model.predict(X) - NASA_SAFETY_BUFFER
+        if rul_avail:
+            y = df[RUL_CLIPPED_COLUMN].values
+
+        else:
+            # Read testing RUL data and remove blank column:
+            df_test_rul = pd.read_csv(testing_RUL_files[CURRENT_SET], sep=' ', header=None).iloc[:, :1]
+            df_test["RUL_PRED"] = y_pred
+            df_test_max = df_test.loc[df_test.groupby(COLUMN_NAMES[Column.UnitNumber])[COLUMN_NAMES[Column.TimeCycles]].idxmax()]
+            y_pred = df_test_max["RUL_PRED"].reset_index(drop=True)
+            y = df_test_rul.iloc[:, 0].clip(upper=RUL_LIMIT)
+
+            print(y_pred)
+            print(y)
+            
 
         ## Metrics
         rmse = np.sqrt(mean_squared_error(y, y_pred))
         print(f"RMSE ({description}): {rmse:.2f}")
         nasa = rul_score(y, y_pred)
         print(f"NASA Score ({description}): {nasa:.2f}")
+        PopulateScatterSubPlot(rows, cols, i, y, y_pred, description, rmse, nasa)
+        i = i+1
 
         sample_units = random.sample(list(df[COLUMN_NAMES[Column.UnitNumber]].unique()), 5)
-        PopulateScatterSubPlot(rows, cols, i+1, y, y_pred, description, rmse, nasa)
-        PopulatePredictedRULvsTime(rows, cols, i+2, df, sample_units, description)
-        i = i + cols
+        PopulatePredictedRULvsTime(rows, cols, i, df, sample_units, rul_avail, description)
+        i = i + 1
 
-    plt.savefig(f"{RESULTS_DIR}/Evaluation_Results.png", 
+    plt.savefig(f"{RESULTS_DIR}/Evaluation_Results_{CURRENT_SET.name}.png", 
                bbox_inches='tight', dpi=DPI)
     plt.close()
 
 
-df_train = LoadData()
-df_train = PrepareData(df_train)
-df_train, feature_columns, sample_units = FeatureEngineering(df_train)
+df_train = LoadData(training=True)
+df_test = LoadData(training=False)
+
+df_train = PrepareData(df_train, training=True)
+df_test = PrepareData(df_test, training=False)
+
+df_train, feature_columns = FeatureEngineering(df_train, training=True)
+df_test, _ = FeatureEngineering(df_test, training=False)
+
 df_train_split, df_test_split = TrainTestSplit(df_train)
 
 if TUNE:
     HyperparameterTuning(df_train, feature_columns)
 else:
     model, feature_cols = RandomForestModel(df_train_split, feature_columns)
-    EvaluateModel(df_train_split, df_test_split, model, feature_cols)
+    EvaluateModel(df_train_split, df_test_split, df_test, model, feature_cols)
