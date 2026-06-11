@@ -24,7 +24,7 @@ class Set(Enum):
     FD003 = 3
     FD004 = 4
 
-CURRENT_SET = Set.FD002
+CURRENT_SET = Set.FD003
 #TUNE = True
 TUNE = False
 
@@ -65,22 +65,23 @@ elif CURRENT_SET == Set.FD002:
     #   NASA Score (Testing Split): 49015
     pass
 elif CURRENT_SET == Set.FD003:
-    EMA_SPAN = 20 # EMA span for filtering out white noise without flattening critical curves near EOL.
-    MEAN_WINDOW = 50 # 
-    STD_WINDOW = 55 # 
-
-    # Parameter Tuning From GridSearch:
-    # Best Estimator: RandomForestRegressor(max_depth=15, max_features='sqrt', min_samples_leaf=2, min_samples_split=8, n_estimators=60, n_jobs=-1, random_state=42)
-    # Validation:
-    # RMSE (Training Split): 1.0
-    # NASA Score (Training Split): 1014
-    # RMSE (Testing Split): 9.85
-    # NASA Score (Testing Split): 12069
-    NUM_TREES = 60 # More trees reduce variance
-    MAX_DEPTH = 15  # Cap depth to prevent memorizing exact rows
-    MIN_SAMPLES_LEAF = 2 # Let every leaf represent a general trend instead of a single sample
-    MIN_SAMPLES_SPLIT = 8 # 
-    MAX_FEATURES = 'sqrt' # Force tree diversity
+    EMA_SPAN = 10 # Best window for smoothing
+    MEAN_WINDOW = 25 # Best window for calculating mean
+    STD_WINDOW = 55 # Best window for calculating STD
+    # Parameter tuning using GridSearch:
+    NUM_TREES = 430
+    MAX_DEPTH = 16
+    MIN_SAMPLES_LEAF = 2
+    MIN_SAMPLES_SPLIT = 2
+    MAX_FEATURES = 'sqrt'
+    # Final training results FD003:
+    # Best Estimator: RandomForestRegressor(max_depth=16, max_features='sqrt', min_samples_leaf=2, min_samples_split=2, n_estimators=430, n_jobs=-1, random_state=42)
+    # Validation using train/test split:
+    #   RMSE (Training Split): 1.10
+    #   NASA Score (Training Split): 1173
+    #   RMSE (Testing Split): 9.56
+    #   NASA Score (Testing Split): 11637
+    pass
 elif CURRENT_SET == Set.FD004:
     EMA_SPAN = 20 # EMA span for filtering out white noise without flattening critical curves near EOL.
     MEAN_WINDOW = 50 # 
@@ -104,10 +105,10 @@ RUL_LIMIT = 130
 
 RANDOM_STATE = 42
 PARAM_GRID = {
-    'n_estimators': [390],
-    'max_depth': [18],
+    'n_estimators': [430],
+    'max_depth': [16],
     'min_samples_leaf': [2],
-    'min_samples_split': range(2, 20, 2),
+    'min_samples_split': range(2, 20, 20),
     'max_features': ['sqrt'],
     'random_state': [RANDOM_STATE],
     'n_jobs': [-1]
@@ -121,7 +122,10 @@ training_files = {
         Set.FD004: "../Data/train_FD004.txt",
         }
 
-OUTPUT_DIR = Path(f"output/{training_files[CURRENT_SET].split('/')[-1].split('.')[0]}")
+OUTPUT_DIR = Path(f"output/{CURRENT_SET.name}")
+CONDITION_DIR = Path(f"{OUTPUT_DIR}/Conditions")
+SENSORS_DIR = Path(f"{OUTPUT_DIR}/Sensors")
+RESULTS_DIR = Path(f"{OUTPUT_DIR}/Results")
 print(OUTPUT_DIR)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
