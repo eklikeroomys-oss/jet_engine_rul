@@ -47,78 +47,23 @@ def parse_args():
 
 CURRENT_SET, TUNE = parse_args()
 
-if CURRENT_SET == Set.FD001:
-    EMA_SPAN = 15 # Best window for smoothing
-    MEAN_WINDOW = 5 # Best window for calculating mean
-    STD_WINDOW = 100 # Best window for calculating STD
-    # Parameter tuning using GridSearchCV:
-    NUM_TREES = 50
-    MAX_DEPTH = 12
-    MIN_SAMPLES_LEAF = 2
-    MIN_SAMPLES_SPLIT = 18
-    MAX_FEATURES = 'sqrt'
-    # Final training results FD001:
-    # Best Estimator: RandomForestRegressor(max_depth=12, max_features='sqrt', min_samples_leaf=2, min_samples_split=18, n_estimators=50, n_jobs=-1, random_state=42)
-    # Validation using train/test split:
-    #   RMSE (Training Split): 3.26
-    #   NASA Score (Training Split): 3847
-    #   RMSE (Testing Split): 11.78
-    #   NASA Score (Testing Split): 13076
-    pass
-elif CURRENT_SET == Set.FD002:
-    EMA_SPAN = 25 # Best window for smoothing
-    MEAN_WINDOW = 5 # Best window for calculating mean
-    STD_WINDOW = 75 # Best window for calculating STD
-    # Parameter tuning using GridSearch:
-    NUM_TREES = 390
-    MAX_DEPTH = 18
-    MIN_SAMPLES_LEAF = 2
-    MIN_SAMPLES_SPLIT = 6
-    MAX_FEATURES = 'sqrt'
-    # Final training results FD002:
-    # Best Estimator: RandomForestRegressor(max_depth=18, max_features='sqrt', min_samples_leaf=2, min_samples_split=6, n_estimators=390, n_jobs=-1, random_state=42)
-    # Validation using train/test split:
-    #   RMSE (Training Split): 1.19
-    #   NASA Score (Training Split): 2986
-    #   RMSE (Testing Split): 12.62
-    #   NASA Score (Testing Split): 49015
-    pass
-elif CURRENT_SET == Set.FD003:
-    EMA_SPAN = 10 # Best window for smoothing
-    MEAN_WINDOW = 25 # Best window for calculating mean
-    STD_WINDOW = 55 # Best window for calculating STD
-    # Parameter tuning using GridSearch:
-    NUM_TREES = 430
-    MAX_DEPTH = 16
-    MIN_SAMPLES_LEAF = 2
-    MIN_SAMPLES_SPLIT = 2
-    MAX_FEATURES = 'sqrt'
-    # Final training results FD003:
-    # Best Estimator: RandomForestRegressor(max_depth=16, max_features='sqrt', min_samples_leaf=2, min_samples_split=2, n_estimators=430, n_jobs=-1, random_state=42)
-    # Validation using train/test split:
-    #   RMSE (Training Split): 1.10
-    #   NASA Score (Training Split): 1173
-    #   RMSE (Testing Split): 9.56
-    #   NASA Score (Testing Split): 11637
-    pass
-elif CURRENT_SET == Set.FD004:
-    EMA_SPAN = 30 # Best window for smoothing
-    MEAN_WINDOW = 15 # Best window for calculating mean
-    STD_WINDOW = 65 # Best window for calculating STD
-    # Parameter Tuning From GridSearch:
-    NUM_TREES = 450
-    MAX_DEPTH = 10
-    MIN_SAMPLES_LEAF = 4
-    MIN_SAMPLES_SPLIT = 14
-    MAX_FEATURES = 'sqrt'
-    # Final training results FD004:
-    # Best Estimator: RandomForestRegressor(max_depth=10, max_features='sqrt', min_samples_leaf=4, min_samples_split=14, n_estimators=450, n_jobs=-1, random_state=42)
-    # Validation using train/test split:
-    #   RMSE (Training Split): 7.10
-    #   NASA Score (Training Split): 54620
-    #   RMSE (Testing Split): 14.80
-    #   NASA Score (Testing Split): 96428
-    pass
+WINDOW_PARAMS = {
+    Set.FD001: {'EMA_SPAN': 15, 'MEAN_WINDOW': 5, 'STD_WINDOW': 100},
+    Set.FD002: {'EMA_SPAN': 25, 'MEAN_WINDOW': 5, 'STD_WINDOW': 75},
+    Set.FD003: {'EMA_SPAN': 10, 'MEAN_WINDOW': 25, 'STD_WINDOW': 55},
+    Set.FD004: {'EMA_SPAN': 30, 'MEAN_WINDOW': 15, 'STD_WINDOW': 65},
+}
+
+DEFAULT_PARAMS = {
+    Set.FD001: {'n_estimators': 50, 'max_depth': 12, 'min_samples_leaf': 2, 'min_samples_split': 18, 'max_features': 'sqrt'},
+    Set.FD002: {'n_estimators': 390, 'max_depth': 18, 'min_samples_leaf': 2, 'min_samples_split': 6, 'max_features': 'sqrt'},
+    Set.FD003: {'n_estimators': 430, 'max_depth': 16, 'min_samples_leaf': 2, 'min_samples_split': 2, 'max_features': 'sqrt'},
+    Set.FD004: {'n_estimators': 450, 'max_depth': 10, 'min_samples_leaf': 4, 'min_samples_split': 14, 'max_features': 'sqrt'},
+}
+
+EMA_SPAN = WINDOW_PARAMS[CURRENT_SET]['EMA_SPAN']
+MEAN_WINDOW = WINDOW_PARAMS[CURRENT_SET]['MEAN_WINDOW']
+STD_WINDOW = WINDOW_PARAMS[CURRENT_SET]['STD_WINDOW']
 
 NASA_SAFETY_BUFFER = 0
 RUL_LIMIT = 100
@@ -691,7 +636,7 @@ def HyperparameterTuning(df_train, feature_columns, debug=False):
 
     return search.best_params_
 
-def RandomForestModel(df_train_split, feature_columns, debug=False, custom_params=None):
+def RandomForestModel(df_train_split, feature_columns, debug=False, param_grid=None):
     printHeading("Random Forest Model", training=True)
 
     target_col = RUL_CLIPPED_COLUMN
@@ -703,29 +648,12 @@ def RandomForestModel(df_train_split, feature_columns, debug=False, custom_param
     X_train = df_train_split[feature_cols].values
     y_train = df_train_split[target_col].values
 
-    if custom_params:
-        print(f"Using tuned parameters: {custom_params}")
-        model = RandomForestRegressor(
-            n_estimators=custom_params.get('n_estimators', NUM_TREES),
-            min_samples_leaf=custom_params.get('min_samples_leaf', MIN_SAMPLES_LEAF),
-            max_features=custom_params.get('max_features', MAX_FEATURES),
-            min_samples_split=custom_params.get('min_samples_split', MIN_SAMPLES_SPLIT),
-            max_depth=custom_params.get('max_depth', MAX_DEPTH),
-            n_jobs=-1,
-            random_state=RANDOM_STATE
-        )
-    else:
-        print(f"Using default parameters: n_estimators={NUM_TREES}, max_depth={MAX_DEPTH}, "
-              f"min_samples_leaf={MIN_SAMPLES_LEAF}, min_samples_split={MIN_SAMPLES_SPLIT}, max_features={MAX_FEATURES}")
-        model = RandomForestRegressor(
-            n_estimators=NUM_TREES,
-            min_samples_leaf=MIN_SAMPLES_LEAF,
-            max_features=MAX_FEATURES,
-            min_samples_split=MIN_SAMPLES_SPLIT,
-            max_depth=MAX_DEPTH,
-            n_jobs=-1,
-            random_state=RANDOM_STATE
-        )
+    print(f"Using parameters: {param_grid}")
+    model = RandomForestRegressor(
+        **param_grid,
+        n_jobs=-1,
+        random_state=RANDOM_STATE
+    )
 
     model.fit(X_train, y_train)
 
@@ -823,8 +751,8 @@ df_train_split, df_test_split = TrainTestSplit(df_train)
 
 if TUNE:
     best_params = HyperparameterTuning(df_train, feature_columns)
-    model, feature_cols = RandomForestModel(df_train_split, feature_columns, custom_params=best_params)
+    model, feature_cols = RandomForestModel(df_train_split, feature_columns, param_grid=best_params)
     EvaluateModel(df_train_split, df_test_split, df_test, model, feature_cols)
 else:
-    model, feature_cols = RandomForestModel(df_train_split, feature_columns)
+    model, feature_cols = RandomForestModel(df_train_split, feature_columns, param_grid=DEFAULT_PARAMS[CURRENT_SET])
     EvaluateModel(df_train_split, df_test_split, df_test, model, feature_cols)
