@@ -126,38 +126,38 @@ RUL_LIMIT = 100
 RANDOM_STATE = 42
 PARAM_GRIDS = {
     Set.FD001: {
-        'n_estimators': [50],
-        'max_depth': [12],
-        'min_samples_leaf': [2],
-        'min_samples_split': range(2, 20, 2),
-        'max_features': ['sqrt'],
+        'n_estimators': [50, 100, 200],
+        'max_depth': [8, 10, 12, 15],
+        'min_samples_leaf': [1, 2, 4],
+        'min_samples_split': [2, 5, 10, 15],
+        'max_features': ['sqrt', 0.5, 0.7],
         'random_state': [RANDOM_STATE],
         'n_jobs': [-1]
     },
     Set.FD002: {
-        'n_estimators': [390],
-        'max_depth': [18],
-        'min_samples_leaf': [2],
-        'min_samples_split': range(2, 20, 2),
-        'max_features': ['sqrt'],
+        'n_estimators': [200, 300, 400, 500],
+        'max_depth': [10, 15, 18, 20],
+        'min_samples_leaf': [1, 2, 4],
+        'min_samples_split': [2, 5, 10],
+        'max_features': ['sqrt', 0.5, 0.7],
         'random_state': [RANDOM_STATE],
         'n_jobs': [-1]
     },
     Set.FD003: {
-        'n_estimators': [430],
-        'max_depth': [16],
-        'min_samples_leaf': [2],
-        'min_samples_split': range(2, 20, 2),
-        'max_features': ['sqrt'],
+        'n_estimators': [200, 300, 400, 500],
+        'max_depth': [10, 14, 16, 18],
+        'min_samples_leaf': [1, 2, 4],
+        'min_samples_split': [2, 5, 10],
+        'max_features': ['sqrt', 0.5, 0.7],
         'random_state': [RANDOM_STATE],
         'n_jobs': [-1]
     },
     Set.FD004: {
-        'n_estimators': [450],
-        'max_depth': [10],
-        'min_samples_leaf': [4],
-        'min_samples_split': range(2, 20, 2),
-        'max_features': ['sqrt'],
+        'n_estimators': [200, 300, 400, 500],
+        'max_depth': [8, 10, 12, 15],
+        'min_samples_leaf': [2, 4, 6],
+        'min_samples_split': [2, 5, 10, 15],
+        'max_features': ['sqrt', 0.5, 0.7],
         'random_state': [RANDOM_STATE],
         'n_jobs': [-1]
     },
@@ -677,7 +677,7 @@ def HyperparameterTuning(df_train, feature_columns, debug=False):
     search = GridSearchCV(
             estimator=RandomForestRegressor(),
             param_grid=PARAM_GRIDS[CURRENT_SET],
-            cv=2,
+            cv=3,
             verbose=3,
             scoring=CMAPSS_SCORER,
             n_jobs=-1)
@@ -687,25 +687,37 @@ def HyperparameterTuning(df_train, feature_columns, debug=False):
 
     print("Best Parameters:", search.best_params_)
     print("Best Estimator:", search.best_estimator_)
-    print("Test Score:", test)
+    print(f"NASA Score (CV): {abs(test):.2f}")
 
-    return
+    return search.best_params_
 
-def RandomForestModel(df_train_split, feature_columns, debug=False):
+def RandomForestModel(df_train_split, feature_columns, debug=False, custom_params=None):
     printHeading("Random Forest Model", training=True)
 
-    ## Extract X and Y data:
     target_col = RUL_CLIPPED_COLUMN
     feature_cols = feature_columns
-    
+
     print(f"Target column: {RUL_CLIPPED_COLUMN}")
     print(f"Feature columns: {feature_cols}")
 
     X_train = df_train_split[feature_cols].values
     y_train = df_train_split[target_col].values
 
-    print(f"Training the random forest model...")
-    model = RandomForestRegressor(
+    if custom_params:
+        print(f"Using tuned parameters: {custom_params}")
+        model = RandomForestRegressor(
+            n_estimators=custom_params.get('n_estimators', NUM_TREES),
+            min_samples_leaf=custom_params.get('min_samples_leaf', MIN_SAMPLES_LEAF),
+            max_features=custom_params.get('max_features', MAX_FEATURES),
+            min_samples_split=custom_params.get('min_samples_split', MIN_SAMPLES_SPLIT),
+            max_depth=custom_params.get('max_depth', MAX_DEPTH),
+            n_jobs=-1,
+            random_state=RANDOM_STATE
+        )
+    else:
+        print(f"Using default parameters: n_estimators={NUM_TREES}, max_depth={MAX_DEPTH}, "
+              f"min_samples_leaf={MIN_SAMPLES_LEAF}, min_samples_split={MIN_SAMPLES_SPLIT}, max_features={MAX_FEATURES}")
+        model = RandomForestRegressor(
             n_estimators=NUM_TREES,
             min_samples_leaf=MIN_SAMPLES_LEAF,
             max_features=MAX_FEATURES,
@@ -713,7 +725,7 @@ def RandomForestModel(df_train_split, feature_columns, debug=False):
             max_depth=MAX_DEPTH,
             n_jobs=-1,
             random_state=RANDOM_STATE
-            )
+        )
 
     model.fit(X_train, y_train)
 
@@ -810,7 +822,9 @@ df_test, _ = FeatureEngineering(df_test, training=False)
 df_train_split, df_test_split = TrainTestSplit(df_train)
 
 if TUNE:
-    HyperparameterTuning(df_train, feature_columns)
+    best_params = HyperparameterTuning(df_train, feature_columns)
+    model, feature_cols = RandomForestModel(df_train_split, feature_columns, custom_params=best_params)
+    EvaluateModel(df_train_split, df_test_split, df_test, model, feature_cols)
 else:
     model, feature_cols = RandomForestModel(df_train_split, feature_columns)
     EvaluateModel(df_train_split, df_test_split, df_test, model, feature_cols)
