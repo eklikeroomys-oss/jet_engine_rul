@@ -1,13 +1,13 @@
 # Jet Engine RUL Using NASA CMAPSS Data
 # "Data URL: https://data.nasa.gov/dataset/cmapss-jet-engine-simulated-data"
 
-import math
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import random
+import argparse
 
 from enum import Enum
 from pathlib import Path
@@ -24,9 +24,28 @@ class Set(Enum):
     FD003 = 3
     FD004 = 4
 
-CURRENT_SET = Set.FD001
-#TUNE = True
-TUNE = False
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Jet Engine RUL Prediction using Random Forest"
+    )
+    parser.add_argument(
+        '-d', '--dataset',
+        type=str,
+        choices=['FD001', 'FD002', 'FD003', 'FD004'],
+        default='FD001',
+        help='Dataset to use (default: FD001)'
+    )
+    parser.add_argument(
+        '-t', '--tune',
+        action='store_true',
+        help='Enable hyperparameter tuning with GridSearchCV'
+    )
+    args = parser.parse_args()
+    return Set[args.dataset], args.tune
+
+
+CURRENT_SET, TUNE = parse_args()
 
 if CURRENT_SET == Set.FD001:
     EMA_SPAN = 15 # Best window for smoothing
@@ -101,18 +120,47 @@ elif CURRENT_SET == Set.FD004:
     #   NASA Score (Testing Split): 96428
     pass
 
-NASA_SAFETY_BUFFER = 0 # Force model to predict a bit earlier
-RUL_LIMIT = 140
+NASA_SAFETY_BUFFER = 0
+RUL_LIMIT = 100
 
 RANDOM_STATE = 42
-PARAM_GRID = {
-    'n_estimators': [450],
-    'max_depth': [10],
-    'min_samples_leaf': [4],
-    'min_samples_split': range(2, 20, 2),
-    'max_features': ['sqrt'],
-    'random_state': [RANDOM_STATE],
-    'n_jobs': [-1]
+PARAM_GRIDS = {
+    Set.FD001: {
+        'n_estimators': [50],
+        'max_depth': [12],
+        'min_samples_leaf': [2],
+        'min_samples_split': range(2, 20, 2),
+        'max_features': ['sqrt'],
+        'random_state': [RANDOM_STATE],
+        'n_jobs': [-1]
+    },
+    Set.FD002: {
+        'n_estimators': [390],
+        'max_depth': [18],
+        'min_samples_leaf': [2],
+        'min_samples_split': range(2, 20, 2),
+        'max_features': ['sqrt'],
+        'random_state': [RANDOM_STATE],
+        'n_jobs': [-1]
+    },
+    Set.FD003: {
+        'n_estimators': [430],
+        'max_depth': [16],
+        'min_samples_leaf': [2],
+        'min_samples_split': range(2, 20, 2),
+        'max_features': ['sqrt'],
+        'random_state': [RANDOM_STATE],
+        'n_jobs': [-1]
+    },
+    Set.FD004: {
+        'n_estimators': [450],
+        'max_depth': [10],
+        'min_samples_leaf': [4],
+        'min_samples_split': range(2, 20, 2),
+        'max_features': ['sqrt'],
+        'random_state': [RANDOM_STATE],
+        'n_jobs': [-1]
+    },
 }
 
 
@@ -208,22 +256,9 @@ COLUMN_NAMES = {
     Column.W32: 'W32',  # LPT coolant bleed (lbm/s)
     }
 
-# Feature Engineered Columns:
-RATIO_T24_T2 = "T24_vs_T2"
-RATIO_T30_T24 = "T30_vs_T24"
-RATIO_T50_T30 = "T50_vs_T30"
-RATIO_T50_T2 = "T50_vs_T2"
-RATIO_W32_W31 = "W32_vs_W31"
-
 RUL_COLUMN = "RUL"
 RUL_CLIPPED_COLUMN = "RUL_CLIPPED"
 CONDITIONS_COLUMN = "Operational Condition"
-TOTAL_COND_1 = "Total Cycles Condition 1"
-TOTAL_COND_2 = "Total Cycles Condition 2"
-TOTAL_COND_3 = "Total Cycles Condition 3"
-TOTAL_COND_4 = "Total Cycles Condition 4"
-TOTAL_COND_5 = "Total Cycles Condition 5"
-TOTAL_COND_6 = "Total Cycles Condition 6"
 
 # Constants from given data
 NUM_OPERATIONAL_CONDITIONS = {
@@ -356,7 +391,7 @@ def FeatureEngineering(df, training: bool, debug=False):
         df_operational_params_scaled = operational_params_scaler.fit_transform(df_operational_params)
 
         printBusy("\tPerforming KMeans fit", training)
-        km = KMeans(n_clusters=NUM_OPERATIONAL_CONDITIONS[CURRENT_SET])
+        km = KMeans(n_clusters=NUM_OPERATIONAL_CONDITIONS[CURRENT_SET], random_state=RANDOM_STATE)
         df[CONDITIONS_COLUMN] = km.fit_predict(df_operational_params_scaled)
         printBusy(f"\t\tCluster centers", training)
         operational_condition_centers = operational_params_scaler.inverse_transform(km.cluster_centers_)
@@ -483,7 +518,7 @@ def FeatureEngineering(df, training: bool, debug=False):
 
         # From the sensor data plots above we can see that the data is very noisy. We will filter the data using 
         # Exponential Moving Average (EMA)
-        # * EMA calculates the average sequentially using current and past cycles. Future values are unknown as in real workd prediction.
+        # * EMA calculates the average sequentially using current and past cycles. Future values are unknown as in real world prediction.
         # * Places higher weight on the most recent cycles. This helps capture the accelerating degradation curve (exponential wear) typical of turbofan engines as they approach failure.
         for c in sensor_columns:
             norm = f"{c}_NORMALIZED"
@@ -640,11 +675,12 @@ def HyperparameterTuning(df_train, feature_columns, debug=False):
     y = df_train[RUL_CLIPPED_COLUMN].values
 
     search = GridSearchCV(
-            estimator=RandomForestRegressor(), 
-            param_grid=PARAM_GRID, 
-            cv=2, 
+            estimator=RandomForestRegressor(),
+            param_grid=PARAM_GRIDS[CURRENT_SET],
+            cv=2,
             verbose=3,
-            scoring=CMAPSS_SCORER)
+            scoring=CMAPSS_SCORER,
+            n_jobs=-1)
     search.fit(X, y)
 
     test = search.score(X, y)
@@ -682,12 +718,12 @@ def RandomForestModel(df_train_split, feature_columns, debug=False):
     model.fit(X_train, y_train)
 
     feature_importances = pd.Series(model.feature_importances_, index=feature_cols)
-    print("Feature imporances:")
+    print("Feature importances:")
     print(feature_importances.sort_values(ascending=False).head(20))
 
     return model, feature_cols
 
-def EvaluateModel(df_train_split, df_test_split, df_test, model, feature_cols, debug=True):
+def EvaluateModel(df_train_split, df_test_split, df_test, model, feature_cols, debug=False):
     print("Evaluating Random Forest Model")
 
     def PopulateScatterSubPlot(plotRows, plotCols, plotIndex, y, y_pred, description, rmse, nasa):
