@@ -25,6 +25,7 @@ class Set(Enum):
     FD002 = 2
     FD003 = 3
     FD004 = 4
+    FDALL = 5
 
 
 def parse_args():
@@ -34,7 +35,7 @@ def parse_args():
     parser.add_argument(
         '-d', '--dataset',
         type=str,
-        choices=['FD001', 'FD002', 'FD003', 'FD004'],
+        choices=['FD001', 'FD002', 'FD003', 'FD004', 'FDALL'],
         default='FD001',
         help='Dataset to use (default: FD001)'
     )
@@ -50,10 +51,11 @@ def parse_args():
 CURRENT_SET, TUNE = parse_args()
 
 WINDOW_PARAMS = {
-    Set.FD001: {'EMA_SPAN': 15, 'MEAN_WINDOW': 5, 'STD_WINDOW': 100},
-    Set.FD002: {'EMA_SPAN': 25, 'MEAN_WINDOW': 5, 'STD_WINDOW': 75},
+    Set.FD001: {'EMA_SPAN': 15, 'MEAN_WINDOW': 5,  'STD_WINDOW': 100},
+    Set.FD002: {'EMA_SPAN': 25, 'MEAN_WINDOW': 5,  'STD_WINDOW': 75},
     Set.FD003: {'EMA_SPAN': 10, 'MEAN_WINDOW': 25, 'STD_WINDOW': 55},
     Set.FD004: {'EMA_SPAN': 30, 'MEAN_WINDOW': 15, 'STD_WINDOW': 65},
+    Set.FDALL: {'EMA_SPAN': 20, 'MEAN_WINDOW': 10, 'STD_WINDOW': 80},
 }
 
 N_JOBS=-1 # Use 10 cores.
@@ -61,7 +63,8 @@ DEFAULT_PARAMS = {
     Set.FD001: {'max_depth': 15, 'max_features': 0.5, 'min_samples_leaf': 1, 'min_samples_split': 5, 'n_estimators': 200, 'n_jobs': N_JOBS, 'random_state': 42},
     Set.FD002: {'max_depth': 25, 'max_features': 0.5, 'min_samples_leaf': 4, 'min_samples_split': 5, 'n_estimators': 300, 'n_jobs': N_JOBS, 'random_state': 42},
     Set.FD003: {'max_depth': 18, 'max_features': 'sqrt', 'min_samples_leaf': 1, 'min_samples_split': 2, 'n_estimators': 600, 'n_jobs': -1, 'random_state': 42},
-    Set.FD004: {'max_depth': 12, 'max_features': 'sqrt', 'min_samples_leaf': 4, 'min_samples_split': 25, 'n_estimators': 600, 'n_jobs': -1, 'random_state': 42}
+    Set.FD004: {'max_depth': 12, 'max_features': 'sqrt', 'min_samples_leaf': 4, 'min_samples_split': 25, 'n_estimators': 600, 'n_jobs': -1, 'random_state': 42},
+    Set.FDALL: {'max_depth': 20, 'max_features': 'sqrt', 'min_samples_leaf': 2, 'min_samples_split': 10, 'n_estimators': 400, 'n_jobs': -1, 'random_state': 42}
 }
 
 EMA_SPAN = WINDOW_PARAMS[CURRENT_SET]['EMA_SPAN']
@@ -109,6 +112,15 @@ PARAM_GRIDS = {
         'random_state': [RANDOM_STATE],
         'n_jobs': [N_JOBS]
     },
+    Set.FDALL: {
+        'n_estimators': [200, 400, 600],
+        'max_depth': [10, 15, 20, 25],
+        'min_samples_leaf': [1, 2, 4, 6],
+        'min_samples_split': [2, 5, 10, 15],
+        'max_features': ['sqrt', 0.5, 0.7],
+        'random_state': [RANDOM_STATE],
+        'n_jobs': [N_JOBS]
+    },
 }
 
 
@@ -117,6 +129,7 @@ training_files = {
         Set.FD002: "../Data/train_FD002.txt",
         Set.FD003: "../Data/train_FD003.txt",
         Set.FD004: "../Data/train_FD004.txt",
+        Set.FDALL: None,
         }
 
 testing_input_files = {
@@ -124,6 +137,7 @@ testing_input_files = {
         Set.FD002: "../Data/test_FD002.txt",
         Set.FD003: "../Data/test_FD003.txt",
         Set.FD004: "../Data/test_FD004.txt",
+        Set.FDALL: None,
         }
 
 testing_RUL_files = {
@@ -131,6 +145,7 @@ testing_RUL_files = {
         Set.FD002: "../Data/RUL_FD002.txt",
         Set.FD003: "../Data/RUL_FD003.txt",
         Set.FD004: "../Data/RUL_FD004.txt",
+        Set.FDALL: None,
         }
 
 OUTPUT_DIR = Path(f"output/{CURRENT_SET.name}")
@@ -213,7 +228,8 @@ NUM_OPERATIONAL_CONDITIONS = {
         Set.FD001: 1,
         Set.FD002: 6,
         Set.FD003: 1,
-        Set.FD004: 6
+        Set.FD004: 6,
+        Set.FDALL: 6
 }
 
 OPERATIONAL_PARAMS = [COLUMN_NAMES[Column.Altitude], COLUMN_NAMES[Column.MachNumber], COLUMN_NAMES[Column.TRA]]
@@ -245,9 +261,22 @@ def plotTitle(title, training: bool):
 def LoadData(training: bool, debug=False):
     printHeading("Data Gathering", training)
     printBusy(f"Loading data files for {CURRENT_SET.name}", training)
-    df = pd.read_csv(training_files[CURRENT_SET] if training else testing_input_files[CURRENT_SET], sep=' ', header=None)
 
-    if debug: 
+    if CURRENT_SET == Set.FDALL:
+        dfs = []
+        unit_offset = 0
+        for s in [Set.FD001, Set.FD002, Set.FD003, Set.FD004]:
+            file_path = training_files[s] if training else testing_input_files[s]
+            df_part = pd.read_csv(file_path, sep=' ', header=None)
+            df_part.iloc[:, Column.UnitNumber.value] = df_part.iloc[:, Column.UnitNumber.value] + unit_offset
+            dfs.append(df_part)
+            max_unit = df_part.iloc[:, Column.UnitNumber.value].max()
+            unit_offset = max_unit + 1
+        df = pd.concat(dfs, ignore_index=True)
+    else:
+        df = pd.read_csv(training_files[CURRENT_SET] if training else testing_input_files[CURRENT_SET], sep=' ', header=None)
+
+    if debug:
         print(df.head(HEAD_COUNT))
         print(df.describe())
 
@@ -515,28 +544,28 @@ def FeatureEngineering(df, training: bool, debug=False):
 
         # Map sensors relevant to data sets:
         feature_column_map = {
-                                #FD001      FD002       FD003       FD004
-            Column.BPR:         [True,      True,       True,       True],
-            Column.epr:         [False,     True,       True,       True],
-            Column.farB:        [False,     True,       False,      True],
-            Column.htBleed:     [True,      True,       True,       True],
-            Column.Nc:          [True,      True,       True,       True],
-            Column.Nf_dmd:      [False,     False,      False,      False],
-            Column.Nf:          [True,      True,       True,       True],
-            Column.NRc:         [True,      True,       True,       True],
-            Column.NRf:         [True,      True,       True,       True],
-            Column.P2:          [False,     True,       False,      True],
-            Column.P15:         [True,      True,       True,       True],
-            Column.P30:         [True,      True,       True,       True],
-            Column.PCNfR_dmd:   [False,     True,       False,      False],
-            Column.phi:         [True,      True,       True,       True],
-            Column.Ps30:        [True,      True,       True,       True],
-            Column.T2:          [False,     True,       False,      True],
-            Column.T24:         [True,      True,       True,       True],
-            Column.T30:         [True,      True,       True,       True],
-            Column.T50:         [True,      True,       True,       True],
-            Column.W31:         [True,      True,       True,       True],
-            Column.W32:         [True,      True,       True,       True],
+                                #FD001      FD002       FD003       FD004       FDALL
+            Column.BPR:         [True,      True,       True,       True,       True],
+            Column.epr:         [False,     True,       True,       True,       True],
+            Column.farB:        [False,     True,       False,      True,       True],
+            Column.htBleed:     [True,      True,       True,       True,       True],
+            Column.Nc:          [True,      True,       True,       True,       True],
+            Column.Nf_dmd:      [False,     False,      False,      False,      False],
+            Column.Nf:          [True,      True,       True,       True,       True],
+            Column.NRc:         [True,      True,       True,       True,       True],
+            Column.NRf:         [True,      True,       True,       True,       True],
+            Column.P2:          [False,     True,       False,      True,       True],
+            Column.P15:         [True,      True,       True,       True,       True],
+            Column.P30:         [True,      True,       True,       True,       True],
+            Column.PCNfR_dmd:   [False,     True,       False,      False,      True],
+            Column.phi:         [True,      True,       True,       True,       True],
+            Column.Ps30:        [True,      True,       True,       True,       True],
+            Column.T2:          [False,     True,       False,      True,       True],
+            Column.T24:         [True,      True,       True,       True,       True],
+            Column.T30:         [True,      True,       True,       True,       True],
+            Column.T50:         [True,      True,       True,       True,       True],
+            Column.W31:         [True,      True,       True,       True,       True],
+            Column.W32:         [True,      True,       True,       True,       True],
         }
 
         for k in feature_column_map.keys():
@@ -703,16 +732,23 @@ def EvaluateModel(df_train_split, df_test_split, df_test, model, feature_cols, d
     for case in [(df_train_split, f"TRAIN SPLIT {CURRENT_SET}", True), (df_test_split, f"TEST SPLIT {CURRENT_SET}", True), (df_test, f"NASA TEST DATA {CURRENT_SET}", False)]:
         df = case[0]
         description = case[1]
-        rul_avail = case[2]
+        has_rul_col = case[2]
 
         X = df[feature_cols].values
         y_pred = model.predict(X) - NASA_SAFETY_BUFFER
-        if rul_avail:
+        if has_rul_col:
             y = df[RUL_CLIPPED_COLUMN].values
-
         else:
             # Read testing RUL data and remove blank column:
-            df_test_rul = pd.read_csv(testing_RUL_files[CURRENT_SET], sep=' ', header=None).iloc[:, :1]
+            if CURRENT_SET == Set.FDALL:
+                dfs = []
+                for s in [Set.FD001, Set.FD002, Set.FD003, Set.FD004]:
+                    df_part = pd.read_csv(testing_RUL_files[s], sep=' ', header=None)
+                    dfs.append(df_part)
+                df_test_rul = pd.concat(dfs, ignore_index=True)
+            else:
+                df_test_rul = pd.read_csv(testing_RUL_files[CURRENT_SET], sep=' ', header=None).iloc[:, :1]
+
             df_test["RUL_PRED"] = y_pred
             df_test_max = df_test.loc[df_test.groupby(COLUMN_NAMES[Column.UnitNumber])[COLUMN_NAMES[Column.TimeCycles]].idxmax()]
             y_pred = df_test_max["RUL_PRED"].reset_index(drop=True)
@@ -720,7 +756,6 @@ def EvaluateModel(df_train_split, df_test_split, df_test, model, feature_cols, d
 
             print(y_pred)
             print(y)
-            
 
         ## Metrics
         rmse = np.sqrt(mean_squared_error(y, y_pred))
@@ -731,7 +766,7 @@ def EvaluateModel(df_train_split, df_test_split, df_test, model, feature_cols, d
         i = i+1
 
         sample_units = random.sample(list(df[COLUMN_NAMES[Column.UnitNumber]].unique()), 5)
-        PopulatePredictedRULvsTime(rows, cols, i, df, sample_units, rul_avail, description)
+        PopulatePredictedRULvsTime(rows, cols, i, df, sample_units, has_rul_col, description)
         i = i + 1
 
     plt.savefig(f"{RESULTS_DIR}/Evaluation_Results_{CURRENT_SET.name}.png", 
