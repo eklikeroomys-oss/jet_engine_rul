@@ -62,9 +62,9 @@ N_JOBS=-1 # Use 10 cores.
 DEFAULT_PARAMS = {
     Set.FD001: {'max_depth': 15, 'max_features': 0.5, 'min_samples_leaf': 1, 'min_samples_split': 5, 'n_estimators': 200, 'n_jobs': N_JOBS, 'random_state': 42},
     Set.FD002: {'max_depth': 25, 'max_features': 0.5, 'min_samples_leaf': 4, 'min_samples_split': 5, 'n_estimators': 300, 'n_jobs': N_JOBS, 'random_state': 42},
-    Set.FD003: {'max_depth': 18, 'max_features': 'sqrt', 'min_samples_leaf': 1, 'min_samples_split': 2, 'n_estimators': 600, 'n_jobs': -1, 'random_state': 42},
-    Set.FD004: {'max_depth': 12, 'max_features': 'sqrt', 'min_samples_leaf': 4, 'min_samples_split': 25, 'n_estimators': 600, 'n_jobs': -1, 'random_state': 42},
-    Set.FDALL: {'max_depth': 20, 'max_features': 'sqrt', 'min_samples_leaf': 2, 'min_samples_split': 10, 'n_estimators': 400, 'n_jobs': -1, 'random_state': 42}
+    Set.FD003: {'max_depth': 18, 'max_features': 'sqrt', 'min_samples_leaf': 1, 'min_samples_split': 2, 'n_estimators': 600, 'n_jobs': N_JOBS, 'random_state': 42},
+    Set.FD004: {'max_depth': 12, 'max_features': 'sqrt', 'min_samples_leaf': 4, 'min_samples_split': 25, 'n_estimators': 600, 'n_jobs': N_JOBS, 'random_state': 42},
+    Set.FDALL: {'max_depth': 30, 'max_features': 0.5, 'min_samples_leaf': 4, 'min_samples_split': 20, 'n_estimators': 600, 'n_jobs': N_JOBS, 'random_state': 42}
 }
 
 EMA_SPAN = WINDOW_PARAMS[CURRENT_SET]['EMA_SPAN']
@@ -113,10 +113,10 @@ PARAM_GRIDS = {
         'n_jobs': [N_JOBS]
     },
     Set.FDALL: {
-        'n_estimators': [200, 400, 600],
-        'max_depth': [10, 15, 20, 25],
-        'min_samples_leaf': [1, 2, 4, 6],
-        'min_samples_split': [2, 5, 10, 15],
+        'n_estimators': [500, 600, 700, 800],
+        'max_depth': [20, 25, 30, 35],
+        'min_samples_leaf': [4, 6, 8, 10],
+        'min_samples_split': [10, 15, 20, 25],
         'max_features': ['sqrt', 0.5, 0.7],
         'random_state': [RANDOM_STATE],
         'n_jobs': [N_JOBS]
@@ -723,10 +723,20 @@ def EvaluateModel(df_train_split, df_test_split, df_test, model, feature_cols, d
             plt.legend()
             plt.grid(True)
 
+    def PopulateErrorDistributionSubPlot(plotRows, plotCols, plotIndex, y, y_pred, description):
+        errors = y_pred - y
+        plt.subplot(plotRows, plotCols, plotIndex)
+        plt.hist(errors, bins=50, edgecolor='black', alpha=0.7)
+        plt.axvline(x=0, color='r', linestyle='--', lw=2)
+        plt.xlabel('Prediction Error (Predicted - Actual)')
+        plt.ylabel('Frequency')
+        plt.title(f'Error Distribution ({description})')
+        plt.grid(True)
+
     # Scatter plot
-    plt.figure(figsize=(20, 20))
+    plt.figure(figsize=(24, 20))
     rows = 3
-    cols = 2
+    cols = 3
     i = 1
 
     for case in [(df_train_split, f"TRAIN SPLIT {CURRENT_SET}", True), (df_test_split, f"TEST SPLIT {CURRENT_SET}", True), (df_test, f"NASA TEST DATA {CURRENT_SET}", False)]:
@@ -763,6 +773,9 @@ def EvaluateModel(df_train_split, df_test_split, df_test, model, feature_cols, d
         nasa = rul_score(y, y_pred)
         print(f"NASA Score ({description}): {nasa:.2f}")
         PopulateScatterSubPlot(rows, cols, i, y, y_pred, description, rmse, nasa)
+        i = i+1
+
+        PopulateErrorDistributionSubPlot(rows, cols, i, y, y_pred, description)
         i = i+1
 
         sample_units = random.sample(list(df[COLUMN_NAMES[Column.UnitNumber]].unique()), 5)
