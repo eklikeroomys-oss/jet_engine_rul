@@ -16,6 +16,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, silhouette_score, make_scorer
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import StandardScaler
+from typing import Any
 
 
 class Set(Enum):
@@ -54,11 +55,12 @@ WINDOW_PARAMS = {
     Set.FD004: {'EMA_SPAN': 30, 'MEAN_WINDOW': 15, 'STD_WINDOW': 65},
 }
 
+N_JOBS=-1 # Use 10 cores.
 DEFAULT_PARAMS = {
-    Set.FD001: {'n_estimators': 50, 'max_depth': 12, 'min_samples_leaf': 2, 'min_samples_split': 18, 'max_features': 'sqrt'},
-    Set.FD002: {'n_estimators': 390, 'max_depth': 18, 'min_samples_leaf': 2, 'min_samples_split': 6, 'max_features': 'sqrt'},
-    Set.FD003: {'n_estimators': 430, 'max_depth': 16, 'min_samples_leaf': 2, 'min_samples_split': 2, 'max_features': 'sqrt'},
-    Set.FD004: {'n_estimators': 450, 'max_depth': 10, 'min_samples_leaf': 4, 'min_samples_split': 14, 'max_features': 'sqrt'},
+    Set.FD001: {'max_depth': 15, 'max_features': 0.5, 'min_samples_leaf': 1, 'min_samples_split': 5, 'n_estimators': 200, 'n_jobs': N_JOBS, 'random_state': 42},
+    Set.FD002: {'n_estimators': 390, 'max_depth': 18, 'min_samples_leaf': 2, 'min_samples_split': 6, 'max_features': 'sqrt', 'n_jobs': N_JOBS, 'random_state': 42},
+    Set.FD003: {'n_estimators': 430, 'max_depth': 16, 'min_samples_leaf': 2, 'min_samples_split': 2, 'max_features': 'sqrt', 'n_jobs': N_JOBS, 'random_state': 42},
+    Set.FD004: {'n_estimators': 450, 'max_depth': 10, 'min_samples_leaf': 4, 'min_samples_split': 14, 'max_features': 'sqrt', 'n_jobs': N_JOBS, 'random_state': 42},
 }
 
 EMA_SPAN = WINDOW_PARAMS[CURRENT_SET]['EMA_SPAN']
@@ -66,7 +68,7 @@ MEAN_WINDOW = WINDOW_PARAMS[CURRENT_SET]['MEAN_WINDOW']
 STD_WINDOW = WINDOW_PARAMS[CURRENT_SET]['STD_WINDOW']
 
 NASA_SAFETY_BUFFER = 0
-RUL_LIMIT = 100
+RUL_LIMIT = 130
 
 RANDOM_STATE = 42
 PARAM_GRIDS = {
@@ -77,7 +79,7 @@ PARAM_GRIDS = {
         'min_samples_split': [2, 5, 10, 15],
         'max_features': ['sqrt', 0.5, 0.7],
         'random_state': [RANDOM_STATE],
-        'n_jobs': [-1]
+        'n_jobs': [N_JOBS]
     },
     Set.FD002: {
         'n_estimators': [200, 300, 400, 500],
@@ -86,7 +88,7 @@ PARAM_GRIDS = {
         'min_samples_split': [2, 5, 10],
         'max_features': ['sqrt', 0.5, 0.7],
         'random_state': [RANDOM_STATE],
-        'n_jobs': [-1]
+        'n_jobs': [N_JOBS]
     },
     Set.FD003: {
         'n_estimators': [200, 300, 400, 500],
@@ -95,7 +97,7 @@ PARAM_GRIDS = {
         'min_samples_split': [2, 5, 10],
         'max_features': ['sqrt', 0.5, 0.7],
         'random_state': [RANDOM_STATE],
-        'n_jobs': [-1]
+        'n_jobs': [N_JOBS]
     },
     Set.FD004: {
         'n_estimators': [200, 300, 400, 500],
@@ -104,7 +106,7 @@ PARAM_GRIDS = {
         'min_samples_split': [2, 5, 10, 15],
         'max_features': ['sqrt', 0.5, 0.7],
         'random_state': [RANDOM_STATE],
-        'n_jobs': [-1]
+        'n_jobs': [N_JOBS]
     },
 }
 
@@ -624,8 +626,7 @@ def HyperparameterTuning(df_train, feature_columns, debug=False):
             param_grid=PARAM_GRIDS[CURRENT_SET],
             cv=3,
             verbose=3,
-            scoring=CMAPSS_SCORER,
-            n_jobs=-1)
+            scoring=CMAPSS_SCORER)
     search.fit(X, y)
 
     test = search.score(X, y)
@@ -636,7 +637,7 @@ def HyperparameterTuning(df_train, feature_columns, debug=False):
 
     return search.best_params_
 
-def RandomForestModel(df_train_split, feature_columns, debug=False, param_grid=None):
+def RandomForestModel(df_train_split, feature_columns, param_grid: dict[str, Any], debug=False):
     printHeading("Random Forest Model", training=True)
 
     target_col = RUL_CLIPPED_COLUMN
@@ -650,9 +651,7 @@ def RandomForestModel(df_train_split, feature_columns, debug=False, param_grid=N
 
     print(f"Using parameters: {param_grid}")
     model = RandomForestRegressor(
-        **param_grid,
-        n_jobs=-1,
-        random_state=RANDOM_STATE
+        **param_grid
     )
 
     model.fit(X_train, y_train)
