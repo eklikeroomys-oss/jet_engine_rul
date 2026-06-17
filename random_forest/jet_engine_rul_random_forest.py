@@ -59,9 +59,9 @@ WINDOW_PARAMS = {
 N_JOBS=-1 # Use 10 cores.
 DEFAULT_PARAMS = {
     Set.FD001: {'max_depth': 15, 'max_features': 0.5, 'min_samples_leaf': 1, 'min_samples_split': 5, 'n_estimators': 200, 'n_jobs': N_JOBS, 'random_state': 42},
-    Set.FD002: {'n_estimators': 390, 'max_depth': 18, 'min_samples_leaf': 2, 'min_samples_split': 6, 'max_features': 'sqrt', 'n_jobs': N_JOBS, 'random_state': 42},
-    Set.FD003: {'n_estimators': 430, 'max_depth': 16, 'min_samples_leaf': 2, 'min_samples_split': 2, 'max_features': 'sqrt', 'n_jobs': N_JOBS, 'random_state': 42},
-    Set.FD004: {'n_estimators': 450, 'max_depth': 10, 'min_samples_leaf': 4, 'min_samples_split': 14, 'max_features': 'sqrt', 'n_jobs': N_JOBS, 'random_state': 42},
+    Set.FD002: {'max_depth': 25, 'max_features': 0.5, 'min_samples_leaf': 4, 'min_samples_split': 5, 'n_estimators': 300, 'n_jobs': N_JOBS, 'random_state': 42},
+    Set.FD003: {'max_depth': 18, 'max_features': 'sqrt', 'min_samples_leaf': 1, 'min_samples_split': 2, 'n_estimators': 600, 'n_jobs': -1, 'random_state': 42},
+    Set.FD004: {'max_depth': 12, 'max_features': 'sqrt', 'min_samples_leaf': 4, 'min_samples_split': 25, 'n_estimators': 600, 'n_jobs': -1, 'random_state': 42}
 }
 
 EMA_SPAN = WINDOW_PARAMS[CURRENT_SET]['EMA_SPAN']
@@ -84,16 +84,16 @@ PARAM_GRIDS = {
     },
     Set.FD002: {
         'n_estimators': [200, 300, 400, 500],
-        'max_depth': [10, 15, 18, 20],
-        'min_samples_leaf': [1, 2, 4],
+        'max_depth': [10, 15, 18, 20, 25, 30],
+        'min_samples_leaf': [1, 2, 4, 6, 8, 10],
         'min_samples_split': [2, 5, 10],
         'max_features': ['sqrt', 0.5, 0.7],
         'random_state': [RANDOM_STATE],
         'n_jobs': [N_JOBS]
     },
     Set.FD003: {
-        'n_estimators': [200, 300, 400, 500],
-        'max_depth': [10, 14, 16, 18],
+        'n_estimators': [400, 500, 600],
+        'max_depth': [16, 18, 20, 22],
         'min_samples_leaf': [1, 2, 4],
         'min_samples_split': [2, 5, 10],
         'max_features': ['sqrt', 0.5, 0.7],
@@ -101,10 +101,10 @@ PARAM_GRIDS = {
         'n_jobs': [N_JOBS]
     },
     Set.FD004: {
-        'n_estimators': [200, 300, 400, 500],
+        'n_estimators': [400, 500, 600],
         'max_depth': [8, 10, 12, 15],
-        'min_samples_leaf': [2, 4, 6],
-        'min_samples_split': [2, 5, 10, 15],
+        'min_samples_leaf': [2, 4, 6, 8],
+        'min_samples_split': [10, 15, 20, 25],
         'max_features': ['sqrt', 0.5, 0.7],
         'random_state': [RANDOM_STATE],
         'n_jobs': [N_JOBS]
