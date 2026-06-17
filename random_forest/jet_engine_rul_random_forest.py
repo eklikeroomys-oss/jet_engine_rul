@@ -14,7 +14,8 @@ from pathlib import Path
 from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, silhouette_score, make_scorer
-from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.experimental import enable_halving_search_cv
+from sklearn.model_selection import train_test_split, HalvingGridSearchCV
 from sklearn.preprocessing import StandardScaler
 from typing import Any
 
@@ -40,7 +41,7 @@ def parse_args():
     parser.add_argument(
         '-t', '--tune',
         action='store_true',
-        help='Enable hyperparameter tuning with GridSearchCV'
+        help='Enable hyperparameter tuning with HalvingSearchCV'
     )
     args = parser.parse_args()
     return Set[args.dataset], args.tune
@@ -621,12 +622,13 @@ def HyperparameterTuning(df_train, feature_columns, debug=False):
     X = df_train[feature_columns].values
     y = df_train[RUL_CLIPPED_COLUMN].values
 
-    search = GridSearchCV(
+    search = HalvingGridSearchCV(
             estimator=RandomForestRegressor(),
             param_grid=PARAM_GRIDS[CURRENT_SET],
             cv=3,
             verbose=3,
-            scoring=CMAPSS_SCORER)
+            scoring=CMAPSS_SCORER,
+            random_state=RANDOM_STATE)
     search.fit(X, y)
 
     test = search.score(X, y)
